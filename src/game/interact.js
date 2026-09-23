@@ -14,6 +14,7 @@ import { hasProduct } from "./rules/supplements.js";
 import { GOALS, memberLine } from "./rules/roster.js";
 import { gymReport } from "./rules/day.js";
 import { markTip } from "./rules/tips.js";
+import { isAmenity, amenityStatus, useAmenity } from "./rules/amenities.js";
 import { startTrainer } from "./train.js";
 import { COLOR } from "./ui/kit.js";
 
@@ -93,17 +94,19 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
         const idx = g.occ[i] - 1;
         const pl = g.state.gym.placed[idx];
         const eq = EQUIPMENT[pl.type];
-        const low = g.state.stats.energy < setCost(eq, 0);
+        const amenity = isAmenity(eq);
+        const status = amenity ? amenityStatus(g.state, idx, EQUIPMENT) : null;
+        const low = !amenity && g.state.stats.energy < setCost(eq, 0);
         const wear = Math.round(pl.wear || 0);
-        const key = `${low}|${wear}|${g.state.money >= repairCost(eq, wear)}`;
+        const key = `${low}|${status?.reason}|${wear}|${g.state.money >= repairCost(eq, wear)}`;
         if (idx !== lastEquip || key !== lastEquipKey) {
           lastEquip = idx;
           lastEquipKey = key;
           const broken = isBroken(pl);
-          T_EQUIP.label = broken ? `${eq.name}: BROKEN` : `Train: ${eq.name}`;
+          T_EQUIP.label = broken ? `${eq.name}: BROKEN` : amenity ? `${eq.use.label}: ${eq.name}` : `Train: ${eq.name}`;
           T_EQUIP.alt = wear >= 1 ? `Repair $${repairCost(eq, wear)}` : "";
-          T_EQUIP.note = broken ? "Members won't touch it until it's fixed." : low ? "Too tired! Eat, drink or sleep."
-            : `${setCost(eq, 1)} energy per working set · wear ${wear}%`;
+          T_EQUIP.note = broken ? "Members won't touch it until it's fixed." : amenity ? (status.ok ? amenityNote(eq) : status.reason)
+            : low ? "Too tired! Eat, drink or sleep." : `${setCost(eq, 1)} energy per working set · wear ${wear}%`;
         }
         T_EQUIP.index = idx;
         return T_EQUIP;
@@ -146,6 +149,38 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
     pop(`+${it.energy} ENERGY`, COLOR.green);
   }
 
+  /** One line on what an amenity does for you. */
+  function amenityNote(eq) {
+    const u = eq.use;
+    const bits = [`${u.minutes} min`];
+    if (u.recover) bits.push(u.worked ? "eases sore muscles" : "faster recovery");
+    if (u.energy) bits.push(`${u.energy > 0 ? "+" : ""}${u.energy} energy`);
+    if (u.tan) bits.push(`${u.tan}-day stage tan`);
+    if (u.practice) bits.push("better posing at shows");
+    return `${bits.join(" · ")} · once a day`;
+  }
+
+  /** Use an amenity: posing practice is a minigame, the rest apply at once. */
+  function enjoy(index, eq) {
+    const st = amenityStatus(g.state, index, EQUIPMENT);
+    if (!st.ok) {
+      audio.play("error");
+      return pop(st.reason.toUpperCase(), "#a8b0bc");
+    }
+    if (eq.use.practice) {
+      startTrainer(g.trainer, "practice", g.state.gym.placed[index].type);
+      g.trainIndex = index;
+      g.mode = "train";
+      return;
+    }
+    const r = useAmenity(g.state, index, EQUIPMENT);
+    g.state = r.state;
+    lastEquip = -1;
+    audio.play("sleep");
+    const msg = r.gains.tan ? "BRONZED!" : r.gains.recovered > 20 ? "RECOVERED!" : r.gains.energy > 0 ? `+${r.gains.energy} ENERGY` : "AHHH...";
+    pop(msg, COLOR.cyan);
+  }
+
   function interact(t, alt) {
     const s = g.state;
     if (t.kind === "member") {
@@ -174,6 +209,7 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
         audio.play("error");
         return pop("BROKEN! PRESS " + g.keyLabel("alt"), "#a8b0bc");
       }
+      if (isAmenity(eq)) return enjoy(t.index, eq);
       if (s.stats.energy < setCost(eq, 0)) {
         audio.play("error");
         return pop("TOO TIRED!", "#a8b0bc");

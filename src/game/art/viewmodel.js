@@ -12,8 +12,9 @@
  * (rowing handle), handles (leg-press side grips; flip), bike (handlebars),
  * curl (right arm + dumbbell; flip for the left), kettle (right arm +
  * kettlebell; flip), glove (right boxing glove; flip), fist (bare right
- * fist for running; flip), crunch (arms crossed on the chest). Forearm
- * girth follows the player's arm development; hands stay hand-sized. Plates
+ * fist for running; flip), crunch (arms crossed on the chest), fly (right
+ * hand on a cable D-handle; flip), sled (both hands on the prowler posts).
+ * Forearm girth follows the player's arm development; hands stay hand-sized. Plates
  * and dumbbell heads follow the chosen weight.
  */
 
@@ -313,7 +314,60 @@ function crunch(fw, hs, skin) {
   return { box: [-220, -130, 440, 330], markup: s };
 }
 
-const BUILDERS = { press, squat, overhead, pulldown, row, bike, handles, curl, kettle, glove, fist, crunch };
+/** Where the fly handle's ring sits relative to the sprite origin (right hand): the cable leaves from here. */
+export const flyRing = (tier) => [FLY_W[0] + (38 + tier * 2) * 0.95, FLY_W[1] - (38 + tier * 2) * 1.2];
+const FLY_W = [40, -104];
+
+/** Cable fly: right fist around a D-handle's vertical grip, the strap running up-outward to the cable ring. */
+function fly(fw, hs, skin) {
+  const W = FLY_W;
+  const [rx, ry] = [W[0] + hs * 0.95, W[1] - hs * 1.2];
+  let s = forearm([190, 170], [W[0] + 8, W[1] + hs * 0.55], fw, skin);
+  // Strap from both grip ends to the ring, drawn behind the fist.
+  const strap = `M${P(W[0] + 2, W[1] - hs * 0.78)}Q${P(W[0] + hs * 0.2, ry)} ${P(rx, ry)}M${P(W[0] + 2, W[1] + hs * 0.78)}Q${P(W[0] + hs * 1.1, W[1] + hs * 0.3)} ${P(rx, ry)}`;
+  s += ln(strap, INK, 9) + ln(strap, "#3a4048", 5.5) + ln(strap, "#8a939c", 1.4, 0.5);
+  s += sh(`M${P(W[0] - 6, W[1] - hs * 0.82)}h12v${f(hs * 1.64)}h-12Z`, "url(#vmRubber)", 2);
+  s += ln(`M${P(rx + 7, ry)}A7 7 0 1 0 ${P(rx - 7, ry)}A7 7 0 1 0 ${P(rx + 7, ry)}`, INK, 6) + ln(`M${P(rx + 7, ry)}A7 7 0 1 0 ${P(rx - 7, ry)}A7 7 0 1 0 ${P(rx + 7, ry)}`, "#dfe7ee", 3);
+  s += fistAt(W, hs, skin);
+  return { box: [-40, -200, 300, 400], markup: s };
+}
+
+/** One sled push post seen from behind: steel tube, rubber sleeve up top. */
+function sledPost(x0, y0, x1, y1) {
+  const g = lerp([x0, y0], [x1, y1], 0.55);
+  let s = sh(capsule([x0, y0], [x1, y1], 18, 15), "#2a2e36", 2.4);
+  s += ln(`M${P(x0 - 4, y0)}L${P(x1 - 3, y1 + 6)}`, "#6b7280", 2.4, 0.6);
+  s += sh(capsule(g, [x1, y1], 24, 21), "url(#vmRubber)", 2.4);
+  s += ln(`M${P(g[0] - 6, g[1])}L${P(x1 - 5, y1 + 8)}`, "#8a939c", 2, 0.4);
+  return s;
+}
+
+/** Sled push: both hands on the tall posts, the plate stack and crossbar below between the arms. */
+function sled(fw, hs, skin, load) {
+  let s = "";
+  // Crossbar and the loaded horn, low in the middle between the arms.
+  s += rubberBar(-122, 122, -30, 8);
+  const n = [2, 3, 4][load];
+  const cols = ["#e2362b", "#2f6fd6", "#f2c230", "#3aa655"];
+  for (let i = 0; i < n; i++) {
+    const y = -4 - i * 15;
+    s += sh(`M-70,${y}a70,17 0 0 0 140,0v10a70,17 0 0 1 -140,0Z`, "#101216", 2);
+    s += ell(0, y, 70, 17, cols[i], 2.2);
+    s += ell(0, y, 46, 11, "#000000", 0, ` opacity=".2"`);
+    s += ln(`M-50,${y - 11}Q-10,${y - 19} 28,${y - 15}`, "#ffffff", 1.6, 0.45);
+  }
+  const ht = -4 - (n - 1) * 15;
+  s += sh(`M-8,${ht}v-34h16v34Z`, "url(#vmChrome)", 2);
+  s += ell(0, ht - 34, 8, 3, "#c9d3dc", 1.6);
+  for (const k of [-1, 1]) s += sledPost(k * 132, 240, k * 112, -170);
+  // Hands: right as drawn, left mirrored.
+  const W = [116, -92];
+  const hand = forearm([205, 190], [W[0] + 8, W[1] + hs * 0.55], fw, skin) + fistAt(W, hs, skin);
+  s += hand + `<g transform="scale(-1 1)">${hand}</g>`;
+  return { box: [-270, -200, 540, 400], markup: s };
+}
+
+const BUILDERS = { press, squat, overhead, pulldown, row, bike, handles, curl, kettle, glove, fist, crunch, fly, sled };
 
 const cache = new Map();
 /**

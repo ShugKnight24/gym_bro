@@ -4,12 +4,13 @@
  * choose → pick a weight tier; set → a cursor sweeps the rep meter and each
  * Space/click is judged against the sweet spot, driving one rep of the
  * first-person arms; done → the game applies the set's quality to the rules
- * and shows the gains. Shows skip the weight pick and pose instead of lift.
+ * and shows the gains. Shows and posing practice skip the weight pick and
+ * pose instead of lift.
  */
 
 import { tempo, meterPos, judge, setQuality, PERFECT, GOOD } from "./rules/timing.js";
 import { TIERS, setCost } from "./rules/stats.js";
-import { viewmodelSet, armTier } from "./art/viewmodel.js";
+import { viewmodelSet, armTier, flyRing } from "./art/viewmodel.js";
 import { drawSvgSprite } from "../engine/sprite.js";
 import { callout } from "./ui/callouts.js";
 import { plate, text, keycap, cached, blit, INK, COLOR } from "./ui/kit.js";
@@ -32,13 +33,17 @@ export function createTrainer() {
   };
 }
 
-/** Begin a set on a machine type, or a competition round (`kind` "show" | "meet"). */
+/**
+ * Begin a set on a machine type, a competition round (`kind` "show" | "meet",
+ * with `eventId`) or posing practice (`kind` "practice", type "posing_room":
+ * three poses like a show round, no event).
+ */
 export function startTrainer(tr, kind, type, eventId = "") {
   tr.on = true;
   tr.kind = kind;
   tr.type = type;
   tr.eventId = eventId;
-  tr.game = kind === "show" ? "pose" : kind === "meet" ? "press" : EQUIPMENT[type].game;
+  tr.game = kind === "show" || kind === "practice" ? "pose" : kind === "meet" ? "press" : EQUIPMENT[type].game;
   tr.tier = kind === "meet" ? 2 : 1;
   tr.phase = kind === "train" ? "choose" : "set";
   tr.reps = kind === "train" ? TIERS[tr.tier].reps : 3;
@@ -147,6 +152,7 @@ export function trainerCamDz(tr) {
   if (!tr.on) return 0;
   const p = repCurve(tr.repT);
   const k = tr.lastHit ? 1 : 0.35;
+  if (tr.type === "sled_turf") return -0.12 * p * k;
   if (tr.game === "squat") return -0.32 * p * k;
   if (tr.game === "pull") return tr.type === "cable_station" ? -0.04 * p * k : 0.22 * p * k;
   if (tr.type === "ab_bench") return 0.08 * p * k;
@@ -160,7 +166,10 @@ function drawSide(ctx, set, name, x, y, ppu, t, flip) {
 }
 
 /** Viewmodel sprite per machine where it differs from its minigame's default. */
-const VM_TYPE = { leg_press: "handles", cable_station: "pulldown", ab_bench: "crunch", stationary_bike: "bike", kettlebell_rack: "kettle" };
+const VM_TYPE = {
+  leg_press: "handles", cable_station: "pulldown", ab_bench: "crunch", stationary_bike: "bike", kettlebell_rack: "kettle",
+  cable_crossover: "fly", sled_turf: "sled",
+};
 const VM_GAME = { press: "press", squat: "squat", pull: "overhead", row: "row", run: "fist", curl: "curl", punch: "glove" };
 const vmName = (tr) => (tr.kind === "train" && VM_TYPE[tr.type]) || VM_GAME[tr.game];
 
@@ -222,6 +231,23 @@ export function drawViewmodel(ctx, view, tr, t, arms, body) {
       drawSide(ctx, set, name, ox + strain, oy + (34 - p * 44) * u + breath + rest, u * k, t, false);
       break;
     }
+    case "fly": {
+      // Both hands sweep in together on a rep; each cable runs from its hand up to a high pulley off-screen.
+      const ring = flyRing(set.tier);
+      const y = oy + (14 - p * 26) * u + breath * 0.5 + rest;
+      for (let sg = -1; sg <= 1; sg += 2) {
+        const x = ox + sg * (100 - p * 72) * u + (sg > 0 ? strain : -strain);
+        cable(ctx, x + sg * ring[0] * u, y + ring[1] * u, ox + sg * 330 * u, oy - 330 * u, u);
+        drawSide(ctx, set, name, x, y, u, t, sg < 0);
+      }
+      break;
+    }
+    case "sled": {
+      turf(ctx, view, tr, u);
+      const k = 1 - 0.05 * p;
+      drawSide(ctx, set, name, ox + strain, oy + (22 - p * 16) * u + breath * 0.5 + rest, u * k, t, false);
+      break;
+    }
     case "handles":
       for (let sg = -1; sg <= 1; sg += 2) drawSide(ctx, set, name, ox + sg * strain, oy + (18 + p * 12) * u + breath * 0.5 + rest, u, t, sg < 0);
       break;
@@ -267,6 +293,85 @@ export function drawViewmodel(ctx, view, tr, t, arms, body) {
       break;
     }
   }
+}
+
+/** Steel cable between two screen points, inked in Comic. */
+function cable(ctx, x0, y0, x1, y1, u) {
+  ctx.lineCap = "round";
+  if (!isModernArt()) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 5 * u;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#a9b4be";
+  ctx.lineWidth = 2.4 * u;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+}
+
+/**
+ * The turf lane ahead of the sled in perspective: yard lines slide toward the
+ * camera a stride per rep, so every push reads as ground gained.
+ */
+function turf(ctx, view, tr, u) {
+  const modern = isModernArt();
+  const H = view.h * 0.5;
+  const F = view.h * 0.9;
+  const cz = 0.8;
+  const hw = 0.72;
+  const X = view.w / 2;
+  const yAt = (d) => H + (F * cz) / d;
+  const xAt = (d) => (F * hw) / d;
+  const near = (F * cz) / (view.h - H);
+  const far = 7;
+  // Ground gained: a stride per good rep (a missed one barely moves), the current one eased in.
+  const k = Math.min(1, tr.repT / REP_TIME);
+  let gained = 0;
+  for (const h of tr.hits) gained += h ? 1 : 0.3;
+  if (tr.hits.length) gained -= (tr.lastHit ? 1 : 0.3) * (1 - k * k * (3 - 2 * k));
+  ctx.save();
+  const g = ctx.createLinearGradient(0, H, 0, view.h);
+  g.addColorStop(0, modern ? "rgba(52,110,58,0)" : "rgba(58,166,85,0)");
+  g.addColorStop(0.12, modern ? "rgba(52,110,58,0.8)" : "rgba(58,166,85,0.85)");
+  g.addColorStop(1, modern ? "rgba(40,92,46,0.95)" : "rgba(35,118,44,1)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(X - xAt(near), view.h);
+  ctx.lineTo(X - xAt(far), yAt(far));
+  ctx.lineTo(X + xAt(far), yAt(far));
+  ctx.lineTo(X + xAt(near), view.h);
+  ctx.closePath();
+  ctx.fill();
+  if (!modern) {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+  // Side lines and sliding yard lines, fading into the distance.
+  ctx.strokeStyle = modern ? "rgba(236,240,230,0.7)" : "#f4f8f0";
+  ctx.lineWidth = Math.max(1.5, 3 * u);
+  for (const sg of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(X + sg * xAt(near) * 0.92, view.h);
+    ctx.lineTo(X + sg * xAt(far) * 0.92, yAt(far));
+    ctx.stroke();
+  }
+  const step = 0.9;
+  const off = (gained * step) % step;
+  for (let d = near + step - off; d < far; d += step) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, (far - d) / 3));
+    ctx.lineWidth = Math.max(1, (6 * u) / d);
+    ctx.beginPath();
+    ctx.moveTo(X - xAt(d) * 0.92, yAt(d));
+    ctx.lineTo(X + xAt(d) * 0.92, yAt(d));
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /** Posing: spotlight, a pool of light at the feet, and the player's own body flexing on each hit. */
@@ -390,6 +495,7 @@ function drawSetHud(ctx, G, tr) {
     tr._labelFor = tr.game + tr.tier;
     tr._count = `${done}/${tr.reps}`;
     tr._label = tr.kind === "show" ? `POSE ${Math.min(done + 1, 3)}/3 · ${POSES[Math.min(done, 2)]}`
+      : tr.kind === "practice" ? `POSING PRACTICE · ${POSES[Math.min(done, 2)]}`
       : tr.kind === "meet" ? `ATTEMPT ${Math.min(done + 1, 3)}/3 · ${EVENTS[tr.eventId].name.toUpperCase()}`
       : `${EQUIPMENT[tr.type].name.toUpperCase()} · ${TIERS[tr.tier].name.toUpperCase()}`;
   }
@@ -511,7 +617,7 @@ function drawResult(ctx, G, tr) {
   // Grade badge.
   plate(ctx, -188, -34, 68, 68, "dark");
   text(ctx, grade, -154, 2, 50, GRADE_TONE[grade], "center", true);
-  text(ctx, tr.kind === "train" ? "SET COMPLETE" : "ROUND DONE", 34, -14, 30, "#ffffff", "center", true);
+  text(ctx, tr.kind === "train" ? "SET COMPLETE" : tr.kind === "practice" ? "PRACTICE DONE" : "ROUND DONE", 34, -14, 30, "#ffffff", "center", true);
   text(ctx, `${perfect}/${tr.reps} PERFECT  ·  BEST COMBO ${tr.best}`, 34, 20, 15, "#ffffff", "center", true);
   ctx.restore();
 }

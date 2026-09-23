@@ -70,6 +70,9 @@ export function normalizeState(raw) {
   s.supps.launched = [...new Set(s.supps.launched.filter((id) => PRODUCTS[id]))];
   s.supps.ads = clamp(Math.floor(s.supps.ads), 0, 3);
   s.today.chats = s.today.chats.filter((id) => Number.isInteger(id));
+  s.today.used = [...new Set(s.today.used.filter((t) => typeof t === "string" && EQUIPMENT[t]))];
+  s.stats.tan = clamp(Math.floor(s.stats.tan), 0, 14);
+  s.stats.posing = clamp(s.stats.posing, 0, 1);
   s.tips = [...new Set(s.tips.filter((id) => typeof id === "string"))];
   normalizeRoster(s, raw);
   return s;

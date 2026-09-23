@@ -27,6 +27,7 @@ import { trainSet, TIERS } from "./rules/stats.js";
 import { placementError, findAt, sellValue } from "./rules/build.js";
 import { eligibility, eventScore, awardScore, resolveEvent, applyEvent } from "./rules/compete.js";
 import { rngFor, SALT } from "./rules/rng.js";
+import { practise } from "./rules/amenities.js";
 import { createPersistence } from "./persist.js";
 import { createInteraction } from "./interact.js";
 import { createMenus } from "./menus.js";
@@ -247,6 +248,20 @@ export function createGame(canvas, uiRoot) {
     g.bodyKey = -1;
   }
 
+  /** A posing practice round in the posing room: skill up, time and a little energy spent. */
+  function finishPractice(q) {
+    const s = g.state;
+    const type = g.trainer.type;
+    const use = EQUIPMENT[type].use;
+    const stats = practise(s.stats, q);
+    g.state = {
+      ...s, time: s.time + use.minutes,
+      stats: { ...stats, energy: Math.max(0, stats.energy + (use.energy || 0)) },
+      today: { ...s.today, used: [...s.today.used, type] },
+    };
+    callout(`POSING ${Math.round(stats.posing * 100)}%`, g.view.w / 2, g.view.h * 0.55, { size: 30, color: COLOR.yellow, life: 1.8 });
+  }
+
   const eventRng = (id) => rngFor(g.state.seed, g.state.day, SALT.event, g.state.career.results.length, id.length);
 
   function finishEvent(q) {
@@ -311,6 +326,7 @@ export function createGame(canvas, uiRoot) {
     hideOverlay();
     g.mode = "play";
     g.lookHintT = input.device === "keyboard" ? 6 : 0;
+    g.hoverArmed = false;
     pop(`DAY ${g.state.day}`, COLOR.yellow);
   }
 
@@ -423,7 +439,10 @@ export function createGame(canvas, uiRoot) {
       // Without pointer lock (refused by embedded browsers, some Safari setups) the view follows the
       // cursor, and resting it near a side edge keeps turning; "Hold to look" restores click-and-drag.
       const mouseLook = !locked && input.device !== "touch";
-      const hover = mouseLook && !settings.dragLook && input.mouse.inside;
+      // Edge turning waits for real mouse movement in play, so a cursor that happens to rest at a
+      // screen edge (or a pointer that never moved) does not spin the view.
+      if (input.mouse.dx || input.mouse.dy) g.hoverArmed = true;
+      const hover = mouseLook && !settings.dragLook && input.mouse.inside && g.hoverArmed;
       const dragging = mouseLook && input.mouse.down;
       const drag = dragLook(hover || dragging, dt, hover ? 0 : 4);
       const edge = hover ? edgeTurn(input.mouse.x / (g.view.w || 1)) : 0;
@@ -449,6 +468,7 @@ export function createGame(canvas, uiRoot) {
       const r = updateTrainer(g.trainer, dt, input, g.view, g.state.stats.energy);
       if (typeof r === "number") {
         if (g.trainer.kind === "train") finishSet(r);
+        else if (g.trainer.kind === "practice") finishPractice(r);
         else finishEvent(r);
       } else if (r === "cancel") {
         g.trainer.on = false;

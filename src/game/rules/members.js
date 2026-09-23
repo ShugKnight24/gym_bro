@@ -33,7 +33,8 @@ export function appeal(placed, clean, rep, catalog) {
 }
 
 export const working = (placed) => placed.filter((p) => !isBroken(p));
-export const capacity = (placed) => working(placed).length * 4;
+/** Four members per working machine; amenities (given the catalog) add none. */
+export const capacity = (placed, catalog) => working(placed).filter((p) => catalog?.[p.type]?.kind !== "amenity").length * 4;
 export const targetMembers = (app, cap, demand = 1) => Math.min(cap, Math.floor((app / 5) * demand));
 
 /** Overnight roster change: at most 3 join and 2 quit per day. */

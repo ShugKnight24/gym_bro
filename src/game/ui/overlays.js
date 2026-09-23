@@ -179,6 +179,8 @@ export function showStats(g, h) {
           <div>Endurance <b>${s.end.toFixed(1)}</b></div>
           <div>Body fat <b>${s.bf.toFixed(1)}%</b></div>
           <div>Energy <b>${Math.round(s.energy)}</b></div>
+          <div>Posing <b>${Math.round((s.posing || 0) * 100)}%</b> <small>posing room</small></div>
+          <div>Stage tan <b>${s.tan ? `${s.tan} day${s.tan > 1 ? "s" : ""}` : "none"}</b> <small>tanning bed</small></div>
         </div>
         <h3>Muscle</h3>${muscleRows(s.mus)}
         <h3>Fatigue <small>(sore muscles gain less — mix it up)</small></h3>${fatigueRows(s.fat)}
@@ -205,6 +207,7 @@ export function showSummary(sum, g, h) {
         <h3>Ledger</h3>
         <div class="stats ledger">
           ${line("Dues", sum.dues)}
+          ${sum.fees ? line("Tanning fees", sum.fees) : ""}
           ${sum.sales.lines.length ? line(`Supplements <small>${sum.sales.units} sold</small>`, sum.sales.revenue) : ""}
           ${line("Rent &amp; upkeep", -sum.costs.rent)}
           ${sum.costs.staff ? line("Staff", -sum.costs.staff) : ""}

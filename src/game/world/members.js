@@ -8,6 +8,7 @@
 import { accessCell, isOpen, DIRS } from "../rules/build.js";
 import { MEMBER_LOOKS } from "../art/figures.js";
 import { ENTRANCE } from "./map.js";
+import { EQUIPMENT } from "../data/equipment.js";
 
 export const MAX_VISIBLE = 10;
 const SPEED = 1.1;
@@ -147,7 +148,8 @@ export function updateCrowd(crowd, dt, roster, min, map, placed, busy = -1, rnd 
         if (!sendTo(ag, map, placed, doorCell(), "leave")) ag.on = false;
         continue;
       }
-      ag.pose = (ag.anim * 1.4) % 2 < 1 ? "liftA" : "liftB";
+      // Lift on machines; relax in the sauna, plunge, tanning bed and the rest.
+      ag.pose = EQUIPMENT[p.type]?.kind === "amenity" ? "idle" : (ag.anim * 1.4) % 2 < 1 ? "liftA" : "liftB";
       // Stand at the edge of the access cell facing the machine.
       const [ax, ay] = accessCell(p.x, p.y, p.rot);
       ag.x = ax + 0.5 + (p.x - ax) * 0.18;

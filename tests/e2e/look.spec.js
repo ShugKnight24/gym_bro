@@ -5,9 +5,11 @@ import { test, expect } from "@playwright/test";
 test("dragging with the mouse turns and tilts the view without pointer lock", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  // Simulate a browser that refuses pointer lock (embedded webviews, some Safari setups).
+  // Simulate a browser that refuses pointer lock (embedded webviews, some Safari setups),
+  // with the "Hold to look" setting on: this test is about drag mode.
   await page.addInitScript(() => {
     Element.prototype.requestPointerLock = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+    localStorage.setItem("gymbro_settings", JSON.stringify({ v: 1, dragLook: true }));
   });
   await page.goto("/");
   await page.waitForFunction(() => window.__game?.mode === "title");
@@ -73,4 +75,17 @@ test("build mode opens with nothing picked; placing needs a pick first", async (
   await page.keyboard.press("Escape");
   await page.waitForTimeout(100);
   expect(await page.evaluate(() => ({ sel: window.__game.build.sel, mode: window.__game.mode }))).toEqual({ sel: -1, mode: "build" });
+});
+
+test("a cursor resting at the edge does not spin the view until the mouse moves", async ({ page }) => {
+  await page.addInitScript(() => {
+    Element.prototype.requestPointerLock = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+  });
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.mode === "title");
+  await page.mouse.move(2, 360);
+  await page.evaluate(() => window.__game.newGame());
+  const a0 = await page.evaluate(() => window.__game.player.angle);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => window.__game.player.angle)).toBeCloseTo(a0, 5);
 });
