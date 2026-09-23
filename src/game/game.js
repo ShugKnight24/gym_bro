@@ -113,6 +113,8 @@ export function createGame(canvas, uiRoot) {
   const applySettings = () => {
     g.trainer.assist = settings.assist;
     g.trainer.calm = settings.calm;
+    g.player.sens = settings.sens;
+    g.player.invertY = settings.invertY;
   };
   applySettings();
 
@@ -322,6 +324,7 @@ export function createGame(canvas, uiRoot) {
     g.state = tops.length ? { ...state, career: { ...state.career, legends: [...state.career.legends, ...tops.map((u) => u.id)] } } : state;
     persist(g.state);
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
     audio.play("sleep");
@@ -493,6 +496,13 @@ export function createGame(canvas, uiRoot) {
     };
     openMenu(() => showSettings(view, input.bindings(), {
       close: back,
+      sens(v) {
+        settings.sens = Number(v) / 100;
+        store.saveSettings(settings);
+        applySettings();
+        const el = uiRoot.querySelector('[data-input="sens"] + small');
+        if (el) el.textContent = `${settings.sens.toFixed(2)}x`;
+      },
       volume(v, bus) {
         audio.setVolume(bus, Number(v) / 100);
         const el = uiRoot.querySelector(`[data-arg="${bus}"] + small`);
@@ -558,6 +568,7 @@ export function createGame(canvas, uiRoot) {
     g.queue = [];
     syncMap();
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
     g.bodyKey = -1;
@@ -638,9 +649,11 @@ export function createGame(canvas, uiRoot) {
       g.player.y = tc.y;
       g.player.angle = tc.a + Math.sin(t * 0.15) * 0.15;
     } else if (g.mode === "play") {
-      if (locked || input.device !== "keyboard") g.lookHintT = 0;
+      // Without pointer lock (denied, embedded browser, Safari quirks) the mouse still looks while the button is held.
+      const drag = !locked && input.mouse.down && input.device !== "touch";
+      if (locked || input.device !== "keyboard" || (drag && (input.mouse.dx || input.mouse.dy))) g.lookHintT = 0;
       else if (g.lookHintT > 0) g.lookHintT -= dt;
-      updatePlayer(g.player, input, dt, locked, solid);
+      updatePlayer(g.player, input, dt, locked || drag, solid);
       g.state.time += dt * MIN_PER_SEC;
       g.target = findTarget();
       if (g.target && (input.pressed("use") || input.pressed("alt"))) interact(g.target, input.pressed("alt"));

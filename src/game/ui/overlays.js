@@ -307,6 +307,10 @@ export function showSettings(st, bindings, h, capturing = "") {
       <h3>Audio</h3>
       ${vol("master", "Master")}${vol("music", "Music")}${vol("sfx", "Effects")}
       ${toggle("muted", "Mute", "Silence everything")}
+      <h3>Look</h3>
+      <label class="set"><span>Sensitivity</span><input type="range" min="25" max="300" value="${Math.round(st.sens * 100)}" data-input="sens"><small>${st.sens.toFixed(2)}x</small></label>
+      ${toggle("invertY", "Invert Y", "Push up to look down")}
+      <p class="hint">No mouse lock? Hold the left button and drag to look. Arrow keys turn too.</p>
       <h3>Accessibility</h3>
       ${toggle("assist", "Easier timing", "Slower rep cursor, wider sweet spot")}
       ${toggle("calm", "Reduce motion", "No screen shake or hit-stop")}
