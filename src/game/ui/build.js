@@ -22,14 +22,15 @@ const MAX_ROWS = 8;
 const spriteOpts = { alpha: 1, flip: false };
 
 export function createBuild() {
-  return { on: false, sel: 0, page: 0, rot: 2, hx: -1, hy: -1, err: null, msg: "", msgT: 0 };
+  // sel -1: nothing picked yet; the player chooses from the catalog before placing.
+  return { on: false, sel: -1, page: 0, rot: 2, hx: -1, hy: -1, err: null, msg: "", msgT: 0 };
 }
 
 /** Catalog rows per page: up to MAX_ROWS, leaving room for the note and message plate. */
 const perPage = (view) => Math.max(1, Math.min(MAX_ROWS, Math.floor((view.h - ROW_Y - 90) / ROW_H)));
 const pageCount = (per) => Math.max(1, Math.ceil(EQUIPMENT_IDS.length / per));
 /** The selected catalog entry, clamped so a stale index never misses. */
-const selected = (b) => EQUIPMENT[EQUIPMENT_IDS[Math.min(Math.max(0, b.sel), EQUIPMENT_IDS.length - 1)]];
+const selected = (b) => (b.sel >= 0 ? EQUIPMENT[EQUIPMENT_IDS[Math.min(b.sel, EQUIPMENT_IDS.length - 1)]] : null);
 
 function layout(view, map) {
   const availW = view.w - PANEL_W - 48;
@@ -46,7 +47,13 @@ function layout(view, map) {
  */
 export function updateBuild(b, input, view, map, placed, dt) {
   b.msgT = Math.max(0, b.msgT - dt);
-  if (input.pressed("build") || input.pressed("pause")) return { kind: "exit" };
+  if (input.pressed("build")) return { kind: "exit" };
+  // Esc first puts the picked machine back, then leaves.
+  if (input.pressed("pause")) {
+    if (b.sel < 0) return { kind: "exit" };
+    b.sel = -1;
+    return null;
+  }
   const per = perPage(view);
   const pages = pageCount(per);
   if (b.page >= pages) b.page = 0;
@@ -60,7 +67,7 @@ export function updateBuild(b, input, view, map, placed, dt) {
   // Gamepad d-pad steps through the whole catalog, flipping pages as it goes.
   const step = (input.pressed("slotNext") ? 1 : 0) - (input.pressed("slotPrev") ? 1 : 0);
   if (step) {
-    b.sel = (b.sel + step + EQUIPMENT_IDS.length) % EQUIPMENT_IDS.length;
+    b.sel = b.sel < 0 ? (step > 0 ? 0 : EQUIPMENT_IDS.length - 1) : (b.sel + step + EQUIPMENT_IDS.length) % EQUIPMENT_IDS.length;
     b.page = Math.floor(b.sel / per);
   }
   if (input.pressed("rotate") || input.mouse.wheel) b.rot = (b.rot + (input.mouse.wheel < 0 ? 3 : 1)) & 3;
@@ -80,8 +87,18 @@ export function updateBuild(b, input, view, map, placed, dt) {
   b.hy = inside ? cy : -1;
   b.err = inside ? placementError(map, placed, cx, cy, b.rot) : null;
   if (!inside) return null;
-  if (input.mouse.rightClicked && findAt(placed, cx, cy) >= 0) return { kind: "sell", x: cx, y: cy };
-  if (input.mouse.clicked) return { kind: "place", type: EQUIPMENT_IDS[b.sel] ?? EQUIPMENT_IDS[0], x: cx, y: cy, rot: b.rot };
+  if (input.mouse.rightClicked) {
+    if (findAt(placed, cx, cy) >= 0) return { kind: "sell", x: cx, y: cy };
+    b.sel = -1;
+    return null;
+  }
+  if (input.mouse.clicked && findAt(placed, cx, cy) < 0) {
+    if (b.sel < 0) {
+      flash(b, "Pick a machine from the list first");
+      return null;
+    }
+    return { kind: "place", type: EQUIPMENT_IDS[b.sel], x: cx, y: cy, rot: b.rot };
+  }
   return null;
 }
 
@@ -213,8 +230,8 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
     const Y = L.oy + b.hy * L.cs;
     const occupied = findAt(placed, b.hx, b.hy) >= 0;
     const eq = selected(b);
-    const ok = !b.err && g.state.money >= eq.cost;
-    if (!occupied) {
+    const ok = eq && !b.err && g.state.money >= eq.cost;
+    if (!occupied && eq) {
       ctx.fillStyle = ok ? "rgba(61,207,106,0.35)" : "rgba(226,54,43,0.35)";
       ctx.fillRect(X, Y, L.cs, L.cs);
       spriteOpts.alpha = 0.6;
@@ -222,10 +239,11 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
       spriteOpts.alpha = 1;
       arrow(ctx, X, Y, L.cs, b.rot, ok ? COLOR.green : COLOR.red);
     }
-    ctx.strokeStyle = occupied ? COLOR.yellow : ok ? COLOR.green : COLOR.red;
+    ctx.strokeStyle = occupied ? COLOR.yellow : !eq ? "#ffffff" : ok ? COLOR.green : COLOR.red;
     ctx.lineWidth = 3;
     ctx.strokeRect(X + 1.5, Y + 1.5, L.cs - 3, L.cs - 3);
-    const tip = occupied ? "Right-click to sell (50% back)" : b.err || (g.state.money < eq.cost ? "Not enough money" : `Place for $${eq.cost}`);
+    const tip = occupied ? "Right-click to sell (50% back)" : !eq ? "Pick a machine from the list →"
+      : b.err || (g.state.money < eq.cost ? "Not enough money" : `Place for $${eq.cost}`);
     text(ctx, tip, X + L.cs / 2, Y - 12, 14, "#ffffff", "center", true);
   }
 
@@ -273,7 +291,7 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
     text(ctx, `$${eq.cost} · appeal +${eq.appeal} · ${eq.energy}⚡`, L.px + 84, y + 38, 12, c);
     if (g.state.money < eq.cost) text(ctx, "$", L.px + PANEL_W - 24, y + 17, 16, COLOR.red, "right");
   }
-  const note = selected(b).desc;
+  const note = selected(b)?.desc || "Pick a machine above, then click the floor.";
   text(ctx, note, L.px + 16, ROW_Y + rows * ROW_H + 12, 12, modern ? "#c9d2dc" : INK);
   if (b.msgT > 0) {
     ctx.globalAlpha = Math.min(1, b.msgT * 2);
