@@ -7,6 +7,9 @@ on:
 
 jobs:
   test:
+    # Actions minutes are only free for public repos: skip (0 minutes) while private,
+    # run automatically once the repo is public.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
