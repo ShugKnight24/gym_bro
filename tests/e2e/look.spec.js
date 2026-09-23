@@ -34,3 +34,43 @@ test("arrow keys turn the view", async ({ page }) => {
   await page.keyboard.up("ArrowRight");
   expect(await page.evaluate(() => window.__game.player.angle)).toBeGreaterThan(a0 + 0.3);
 });
+
+test("without pointer lock the view follows the mouse, and the edges keep turning", async ({ page }) => {
+  await page.addInitScript(() => {
+    Element.prototype.requestPointerLock = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+  });
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.mode === "title");
+  await page.evaluate(() => window.__game.newGame());
+  await page.mouse.move(640, 360);
+  const a0 = await page.evaluate(() => window.__game.player.angle);
+  for (let i = 1; i <= 8; i++) await page.mouse.move(640 + i * 20, 360);
+  const a1 = await page.evaluate(() => window.__game.player.angle);
+  expect(a1).toBeGreaterThan(a0 + 0.2);
+  // Resting at the right edge keeps turning with no mouse movement.
+  await page.mouse.move(1275, 360);
+  const e0 = await page.evaluate(() => window.__game.player.angle);
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => window.__game.player.angle)).toBeGreaterThan(e0 + 0.4);
+});
+
+test("build mode opens with nothing picked; placing needs a pick first", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => window.__game?.mode === "title");
+  await page.evaluate(() => {
+    window.__game.newGame();
+    window.__game.setState({ money: 5000 });
+    window.__game.openBuild();
+  });
+  expect(await page.evaluate(() => window.__game.build.sel)).toBe(-1);
+  const n0 = await page.evaluate(() => window.__game.state.gym.placed.length);
+  await page.mouse.click(300, 300);
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__game.state.gym.placed.length)).toBe(n0);
+  await page.keyboard.press("Digit2");
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => window.__game.build.sel)).toBe(1);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => ({ sel: window.__game.build.sel, mode: window.__game.mode }))).toEqual({ sel: -1, mode: "build" });
+});

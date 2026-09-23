@@ -7,7 +7,7 @@
 import { createSave } from "../engine/save.js";
 import { SAVE_VERSION, migrateSave, normalizeState } from "./rules/save-state.js";
 
-const SETTINGS = { assist: false, calm: false, sens: 1, invertY: false, tips: true, bindings: null };
+const SETTINGS = { assist: false, calm: false, sens: 1, invertY: false, tips: true, dragLook: false, bindings: null };
 
 export function createPersistence() {
   const slot = createSave("gymbro_save", SAVE_VERSION, migrateSave);
@@ -29,9 +29,10 @@ export function createPersistence() {
         sens: typeof d.sens === "number" && d.sens >= 0.25 && d.sens <= 3 ? d.sens : SETTINGS.sens,
         invertY: d.invertY === true,
         tips: d.tips !== false,
+        dragLook: d.dragLook === true,
         bindings: d.bindings && typeof d.bindings === "object" ? d.bindings : SETTINGS.bindings,
       };
     },
-    saveSettings: (s) => prefs.write({ assist: s.assist, calm: s.calm, sens: s.sens, invertY: s.invertY, tips: s.tips, bindings: s.bindings }),
+    saveSettings: (s) => prefs.write({ assist: s.assist, calm: s.calm, sens: s.sens, invertY: s.invertY, tips: s.tips, dragLook: s.dragLook, bindings: s.bindings }),
   };
 }

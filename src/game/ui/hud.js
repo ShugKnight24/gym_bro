@@ -128,6 +128,7 @@ function drawPlates(ctx, vw, vh, g, target, locked) {
 
   if (!locked && g.lookHintT > 0) {
     ctx.globalAlpha = Math.min(1, g.lookHintT);
+    const LOOK_HINT = g.settings.dragLook ? LOOK_HINTS.drag : LOOK_HINTS.follow;
     ctx.font = font(15, !modern);
     const hw = Math.ceil(ctx.measureText(LOOK_HINT).width) + 40;
     plate(ctx, cx - hw / 2, vh * 0.3, hw, 34, "dark");
@@ -154,5 +155,8 @@ function drawPlates(ctx, vw, vh, g, target, locked) {
   }
 }
 
-const LOOK_HINT = "DRAG TO LOOK \u00b7 CLICK TO LOCK THE MOUSE \u00b7 \u2190 \u2192 TURN";
+const LOOK_HINTS = {
+  follow: "MOVE THE MOUSE TO LOOK \u00b7 REST AT AN EDGE TO KEEP TURNING \u00b7 CLICK TO LOCK",
+  drag: "DRAG TO LOOK \u00b7 CLICK TO LOCK THE MOUSE \u00b7 \u2190 \u2192 TURN",
+};
 const HINTS = [["build", "build", 50], ["careers", "careers", 64], ["gym", "gym office", 84], ["stats", "physique", 72], ["pause", "menu", 0]];

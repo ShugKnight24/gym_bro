@@ -14,7 +14,7 @@ const FIRST = [
 ];
 const LAST = "ABCDEFGHJKLMNOPRSTVWZ";
 /** Number of member looks in art/figures.js MEMBER_LOOKS (rules do not import art; a test keeps them in step). */
-export const LOOK_COUNT = 8;
+export const LOOK_COUNT = 10;
 
 /** Goals, and the machines each goal loves (first is most wanted). */
 export const GOALS = {
