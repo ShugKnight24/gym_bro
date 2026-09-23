@@ -516,8 +516,11 @@ export function createGame(canvas, uiRoot) {
       ctx.translate(sx, sy);
       rc.render(ctx, view, cam, g.scene.recs, g.scene.n, t, renderOpts);
       if (g.mode === "train") {
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
-        ctx.fillRect(-20, -20, view.w + 40, view.h + 40);
+        // Competitions dim the room around the stage; sets keep it lit (the arm shadow and vignette give depth).
+        if (g.trainer.kind !== "train") {
+          ctx.fillStyle = "rgba(0,0,0,0.18)";
+          ctx.fillRect(-20, -20, view.w + 40, view.h + 40);
+        }
         drawViewmodel(ctx, view, g.trainer, t, g.state.stats.mus.arms, g.body);
       }
       ctx.restore();
