@@ -66,6 +66,8 @@ export function cached(ctx, key, w, h, pad, paint, sub = "") {
 }
 
 export function blit(ctx, c, x, y, w, h) {
+  // A zero-size view (first frame before layout) paints a zero-size canvas.
+  if (!c.width || !c.height) return;
   const p = c._pad;
   ctx.drawImage(c, Math.round(x - p), Math.round(y - p), Math.round(w + p * 2), Math.round(h + p * 2));
 }

@@ -18,6 +18,7 @@ const fmtEnd = memo((v) => v.toFixed(1));
 const fmtPhys = memo((v) => v.toFixed(1));
 const fmtMembers = memo((v) => `${v}`);
 const fmtRep = memo((v) => `${v}`);
+const fmtSat = memo((v) => `${v}%`);
 
 export function drawHud(ctx, view, g, target, locked) {
   const s = g.state;
@@ -49,11 +50,13 @@ export function drawHud(ctx, view, g, target, locked) {
 
   // Gym roster.
   const rx = view.w - 196;
-  plate(ctx, rx, 14, 180, 58, "cream");
+  plate(ctx, rx, 14, 180, 82, "cream");
   text(ctx, "MEMBERS", rx + 14, 32, 13, light);
   text(ctx, fmtMembers(s.members), rx + 166, 32, 20, light, "right");
   text(ctx, "REPUTATION", rx + 14, 56, 13, light);
   text(ctx, fmtRep(s.rep), rx + 166, 56, 18, light, "right");
+  text(ctx, "SATISFACTION", rx + 14, 80, 13, light);
+  text(ctx, fmtSat(s.sat), rx + 166, 80, 18, s.sat < 45 ? COLOR.red : light, "right");
 
   // Crosshair dot.
   const cx = Math.round(view.w / 2);
@@ -66,18 +69,21 @@ export function drawHud(ctx, view, g, target, locked) {
   // Interaction prompt.
   if (target) {
     ctx.font = font(16, !modern);
+    const ku = g.keyLabel("use");
+    const ka = g.keyLabel("alt");
     const lw = ctx.measureText(target.label).width;
     const aw = target.alt ? ctx.measureText(target.alt).width : 0;
-    const w = 58 + lw + (target.alt ? 58 + aw : 0);
+    const extra = (ku.length - 1) * 9;
+    const w = 58 + lw + extra + (target.alt ? 58 + aw + (ka.length - 1) * 9 : 0);
     const px = cx - w / 2;
     const py = cy + 54;
     plate(ctx, px, py, w, 40, "cream");
     let x = px + 12;
-    x += keycap(ctx, "E", x, py + 20) + 8;
+    x += keycap(ctx, ku, x, py + 20) + 8;
     text(ctx, target.label, x, py + 20, 16, light);
     if (target.alt) {
       x += lw + 20;
-      x += keycap(ctx, "F", x, py + 20) + 8;
+      x += keycap(ctx, ka, x, py + 20) + 8;
       text(ctx, target.alt, x, py + 20, 16, light);
     }
     if (target.note) text(ctx, target.note, cx, py + 56, 14, "#ffffff", "center", true);
@@ -98,18 +104,15 @@ export function drawHud(ctx, view, g, target, locked) {
     ctx.globalAlpha = 1;
   }
 
-  // Key hints.
+  // Key hints (touch has its own buttons).
+  if (g.keyLabel("use") === "USE") return;
   let x = 18;
   const y = view.h - 22;
-  x += keycap(ctx, "TAB", x, y, 11) + 6;
-  text(ctx, "build", x, y, 13, "#ffffff", "left", true);
-  x += 50;
-  x += keycap(ctx, "C", x, y, 11) + 6;
-  text(ctx, "careers", x, y, 13, "#ffffff", "left", true);
-  x += 64;
-  x += keycap(ctx, "P", x, y, 11) + 6;
-  text(ctx, "physique", x, y, 13, "#ffffff", "left", true);
-  x += 72;
-  x += keycap(ctx, "ESC", x, y, 11) + 6;
-  text(ctx, "menu", x, y, 13, "#ffffff", "left", true);
+  for (const [action, label, w] of HINTS) {
+    x += keycap(ctx, g.keyLabel(action), x, y, 11) + 6;
+    text(ctx, label, x, y, 13, "#ffffff", "left", true);
+    x += w;
+  }
 }
+
+const HINTS = [["build", "build", 50], ["careers", "careers", 64], ["gym", "gym office", 84], ["stats", "physique", 72], ["pause", "menu", 0]];

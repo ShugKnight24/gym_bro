@@ -26,6 +26,8 @@ export function createTrainer() {
   return {
     on: false, kind: "train", type: "", game: "", tier: 1, phase: "choose", reps: 8, hits: [], sweeps: 0, idle: 0,
     repT: 9, lastHit: 0, combo: 0, best: 0, side: 1, doneT: 0, quality: 0, eventId: "", tempo: tempo(1), shake: 0,
+    // Options and hooks the game sets: easier timing, calmer camera, a callback per judged rep.
+    assist: false, calm: false, onRep: null,
   };
 }
 
@@ -48,7 +50,7 @@ export function startTrainer(tr, kind, type, eventId = "") {
   tr.side = 1;
   tr.doneT = 0;
   tr.quality = 0;
-  tr.tempo = tempo(tr.tier);
+  tr.tempo = tempo(tr.tier, tr.assist);
   tr._labelN = -1;
 }
 
@@ -56,7 +58,7 @@ function beginSet(tr) {
   tr.phase = "set";
   tr._labelN = -1;
   tr.reps = TIERS[tr.tier].reps;
-  tr.tempo = tempo(tr.tier);
+  tr.tempo = tempo(tr.tier, tr.assist);
   tr.sweeps = 0;
   tr.idle = 0;
 }
@@ -84,6 +86,8 @@ function registerRep(tr, h, view) {
     callout("MISS", cx + jit * 0.5, cy + 20, { size: 30, color: "#a8b0bc", life: 0.8 });
   }
   if (h && tr.combo >= 3) callout(`COMBO x${tr.combo}`, cx + 190, view.h * 0.22, { size: 22, color: COLOR.cyan, life: 0.8, rot: 0.08 });
+  if (tr.calm) tr.shake = 0;
+  tr.onRep?.(h, tr.combo);
 }
 
 /**
@@ -95,8 +99,8 @@ export function updateTrainer(tr, dt, input, view, energy) {
   tr.repT += dt;
   if (tr.phase === "choose") {
     if (input.pressed("pause") || input.pressed("use")) return "cancel";
-    if (input.pressed("left") || input.pressed("turnL")) tr.tier = Math.max(0, tr.tier - 1);
-    if (input.pressed("right") || input.pressed("turnR")) tr.tier = Math.min(2, tr.tier + 1);
+    if (input.pressed("left") || input.pressed("turnL") || input.pressed("slotPrev")) tr.tier = Math.max(0, tr.tier - 1);
+    if (input.pressed("right") || input.pressed("turnR") || input.pressed("slotNext")) tr.tier = Math.min(2, tr.tier + 1);
     for (let i = 0; i < 3; i++) if (input.pressed(`slot${i + 1}`)) tr.tier = i;
     if (input.pressed("rep") || input.mouse.clicked) {
       if (energy < setCost(EQUIPMENT[tr.type], tr.tier)) {
