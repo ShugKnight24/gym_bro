@@ -1,11 +1,14 @@
 /**
- * The starter gym: a 16×12 grid of 2 m cells. Wall, floor and ceiling ids
+ * The starter gym: a 16×12 grid of 2 m cells, plus the east annex (six more
+ * columns) once the Gym Owner career opens it up. Wall, floor and ceiling ids
  * index the textures in ./textures.js. Static props sit at free world
  * positions; the cells they stand in are blocked for walking and building.
  */
 
 export const W = 16;
 export const H = 12;
+/** With the annex open the grid is ANNEX_W wide; the east wall opens at rows 3-5. */
+export const ANNEX_W = 22;
 export const CELL_CM = 200;
 
 export const WALL = { BLOCK: 1, MIRROR: 2, WINDOW: 3, DOOR: 4, MURAL_L: 5, ENTRANCE: 6, POSTER: 7, MURAL_R: 8 };
@@ -16,6 +19,22 @@ export const CEIL = { TILE: 1, LIGHT: 2 };
 export const MIRROR_X = 1;
 export const MIRROR_Y0 = 2;
 export const MIRROR_Y1 = 9;
+
+/** Annex columns 15-21 appended to each row when it is open. */
+const ANNEX = [
+  "1111331",
+  "1.....1",
+  "1.....3",
+  "......3",
+  "......1",
+  "......3",
+  "1.....3",
+  "1.....1",
+  "1.....1",
+  "1.....1",
+  "1.....1",
+  "1111111",
+];
 
 const ROWS = [
   "1113317581133111",
@@ -59,24 +78,28 @@ const RESERVED = [[11, 9], [12, 9], [13, 9], [12, 8], [13, 8], [12, 10], [13, 10
 /** Cells that must stay reachable: home door, entrance, desk and vending fronts. */
 const KEEP = [[14, 10], [4, 10], [11, 9], [13, 7]];
 
-export function buildMap() {
-  const n = W * H;
+export function buildMap(annex = false) {
+  const w = annex ? ANNEX_W : W;
+  const rows = annex ? ROWS.map((r, y) => r.slice(0, W - 1) + ANNEX[y]) : ROWS;
+  const n = w * H;
   const walls = new Uint8Array(n);
   const floor = new Uint8Array(n).fill(FLOOR.MAT);
   const ceil = new Uint8Array(n).fill(CEIL.TILE);
   const blocked = new Uint8Array(n);
   const reserved = new Uint8Array(n);
   for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const c = ROWS[y][x];
-      walls[y * W + x] = c === "." ? 0 : Number(c);
-      if (x >= 11 && y >= 7) floor[y * W + x] = FLOOR.LOBBY;
-      if (x % 3 === 1 && y % 3 === 1) ceil[y * W + x] = CEIL.LIGHT;
+    for (let x = 0; x < w; x++) {
+      const c = rows[y][x];
+      walls[y * w + x] = c === "." ? 0 : Number(c);
+      if (x >= 11 && x < W - 1 && y >= 7) floor[y * w + x] = FLOOR.LOBBY;
+      if (x % 3 === 1 && y % 3 === 1) ceil[y * w + x] = CEIL.LIGHT;
     }
   }
-  for (const [x, y] of BLOCKED) blocked[y * W + x] = 1;
-  for (const [x, y] of RESERVED) reserved[y * W + x] = 1;
-  return { w: W, h: H, walls, floor, ceil, blocked, reserved, spawn: SPAWN, keep: KEEP };
+  for (const [x, y] of BLOCKED) blocked[y * w + x] = 1;
+  for (const [x, y] of RESERVED) reserved[y * w + x] = 1;
+  // The old east wall's doorway must stay walkable.
+  if (annex) for (let y = 3; y <= 5; y++) reserved[y * w + (W - 1)] = 1;
+  return { w, h: H, walls, floor, ceil, blocked, reserved, spawn: SPAWN, keep: KEEP };
 }
 
 export const isSolidCell = (m, x, y) => x < 0 || y < 0 || x >= m.w || y >= m.h || m.walls[y * m.w + x] > 0;
