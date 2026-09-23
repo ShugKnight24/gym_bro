@@ -194,3 +194,75 @@ describe("save normalisation", () => {
     expect(typeof m.state.seed).toBe("number");
   });
 });
+
+describe("roster", async () => {
+  const { memberMood, favStatus, reconcileRoster, memberLine, LOOK_COUNT } = await import("../../src/game/rules/roster.js");
+  const { MEMBER_LOOKS } = await import("../../src/game/art/figures.js");
+
+  it("keeps the look count in step with the art", () => {
+    expect(LOOK_COUNT).toBe(MEMBER_LOOKS.length);
+  });
+
+  it("starts with named members matching the count", () => {
+    const g = base();
+    expect(g.roster).toHaveLength(g.members);
+    expect(g.roster[0].name).toMatch(/\w+ \w\./);
+  });
+
+  it("members are unhappy when their machine is missing or broken", () => {
+    const g = base();
+    const m = { ...g.roster[0], fav: "bench_press" };
+    expect(favStatus(m, g.gym.placed)).toBe("ok");
+    const broken = { ...g, gym: { ...g.gym, placed: g.gym.placed.map((p) => (p.type === "bench_press" ? { ...p, wear: BROKEN } : p)) } };
+    expect(favStatus(m, broken.gym.placed)).toBe("broken");
+    expect(memberMood(m, broken, 60)).toBeLessThan(memberMood(m, g, 60));
+    expect(memberLine(m, broken, EQUIPMENT, 12, 14)).toMatch(/broken/);
+    expect(favStatus({ ...m, fav: "leg_press" }, g.gym.placed)).toBe("missing");
+  });
+
+  it("the unhappiest leave first, newcomers get names", () => {
+    const g = base();
+    const happy = { ...g.roster[0], id: 10, fav: "bench_press" };
+    const sad = { ...g.roster[0], id: 11, fav: "leg_press" };
+    const r = reconcileRoster({ ...g, roster: [happy, sad], members: 2 }, 1, seq(0.3), EQUIPMENT, 14);
+    expect(r.roster.map((m) => m.id)).toEqual([10]);
+    expect(r.left[0].why).toMatch(/Leg Press/);
+    const grow = reconcileRoster({ ...g, roster: [happy], nextId: 12 }, 3, seq(0.3), EQUIPMENT, 14);
+    expect(grow.joined).toHaveLength(2);
+    expect(grow.nextId).toBe(14);
+  });
+
+  it("the night keeps roster and count in step and names who came and went", () => {
+    let g = { ...base(), members: 6 };
+    g = normalizeState(g);
+    const { state, summary } = endDay(g);
+    expect(state.roster).toHaveLength(state.members);
+    expect(summary.joinedNames.length).toBe(state.roster.filter((m) => m.id >= g.nextId).length);
+    expect(summary.left.length).toBe(g.roster.filter((m) => !state.roster.some((k) => k.id === m.id)).length);
+  });
+
+  it("old saves get a roster generated to match", () => {
+    const s = normalizeState({ day: 9, members: 7, seed: 5 });
+    expect(s.roster).toHaveLength(7);
+    expect(new Set(s.roster.map((m) => m.id)).size).toBe(7);
+    expect(s.nextId).toBeGreaterThan(Math.max(...s.roster.map((m) => m.id)));
+  });
+
+  it("staff cost money every night and help", () => {
+    const g = { ...base(), gym: { ...base().gym, upgrades: { trainer: true, receptionist: true } } };
+    expect(dailyCosts(g).staff).toBe(95);
+    expect(gymReport(g).sat).toBeGreaterThan(gymReport(base()).sat);
+  });
+});
+
+describe("getting started", async () => {
+  const { nextTips, markTip, tipText, TIPS } = await import("../../src/game/rules/tips.js");
+  it("walks through the checklist in order and fills in keys", () => {
+    let g = base();
+    expect(nextTips(g).map((t) => t.id)).toEqual(["train", "chat"]);
+    g = markTip({ ...g, today: { ...g.today, sets: 1 } }, "chat");
+    expect(nextTips(g)[0].id).toBe("clean");
+    expect(markTip(g, "chat")).toBe(g);
+    expect(tipText(TIPS[0], () => "E")).toBe("Walk up to a machine, E to train");
+  });
+});

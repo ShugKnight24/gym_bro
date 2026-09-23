@@ -30,13 +30,16 @@ function blocked(solid, x, y) {
 /**
  * @param {object} p       player
  * @param {object} input   engine/input.js
- * @param {boolean} look   apply mouse look (pointer locked, or dragging with the button held)
+ * @param {boolean} look   pointer is locked: apply raw mouse look
  * @param {(cx:number, cy:number) => boolean} solid
+ * @param {{x:number, y:number}|null} drag  smoothed drag-to-look deltas (no pointer lock), in px
  */
-export function updatePlayer(p, input, dt, look, solid) {
+export function updatePlayer(p, input, dt, look, solid, drag = null) {
   p.angle += input.axis("turnL", "turnR") * TURN * dt;
   let lx = look ? input.mouse.dx : 0;
   let ly = look ? input.mouse.dy : 0;
+  // Dragging is mostly for turning: vertical drag tilts at a third of the rate.
+  if (drag) (lx += drag.x), (ly += drag.y * 0.35);
   if (input.lookDelta) (lx += input.lookDelta.x), (ly += input.lookDelta.y);
   const k = p.sens ?? 1;
   const iy = p.invertY ? -1 : 1;

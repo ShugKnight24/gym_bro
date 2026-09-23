@@ -1,6 +1,7 @@
 /**
- * Visible gym members: a fixed pool of walkers that come in the street door,
- * path to a free machine's access cell, work out a while and leave. How many
+ * Visible gym members: a fixed pool of walkers, each one a member of the
+ * roster, that come in the street door, path to a free machine (their
+ * favourite when it is free and working), work out a while and leave. How many
  * are in at once follows the roster and the time of day (evening rush).
  */
 
@@ -23,7 +24,7 @@ export function busyness(min) {
 export function createCrowd() {
   return {
     agents: Array.from({ length: MAX_VISIBLE }, (_, i) => ({
-      on: false, i, look: i % MEMBER_LOOKS.length, x: 0, y: 0, state: "", path: null, pi: 0, timer: 0, target: -1, pose: "idle", anim: 0,
+      on: false, i, look: i % MEMBER_LOOKS.length, member: -1, x: 0, y: 0, state: "", path: null, pi: 0, timer: 0, target: -1, pose: "idle", anim: 0,
     })),
     spawnIn: 1,
   };
@@ -70,12 +71,12 @@ function sendTo(ag, map, placed, cell, state) {
 }
 
 /**
- * Advance the crowd. `members` is the roster size, `min` the clock,
+ * Advance the crowd. `roster` is the member list, `min` the clock,
  * `placed` the equipment list, `busy` the machine the player is using
  * (no member takes it; anyone on it moves on).
  */
-export function updateCrowd(crowd, dt, members, min, map, placed, busy = -1, rnd = Math.random) {
-  const want = Math.min(MAX_VISIBLE, Math.round(members * busyness(min)));
+export function updateCrowd(crowd, dt, roster, min, map, placed, busy = -1, rnd = Math.random) {
+  const want = Math.min(MAX_VISIBLE, Math.round(roster.length * busyness(min)));
   let active = 0;
   for (const ag of crowd.agents) if (ag.on) active++;
   crowd.spawnIn -= dt;
@@ -85,13 +86,20 @@ export function updateCrowd(crowd, dt, members, min, map, placed, busy = -1, rnd
     // A free machine whose access cell no one else is heading to.
     const taken = new Set(crowd.agents.filter((a) => a.on).map((a) => a.target));
     taken.add(busy);
-    const free = placed.map((_, i) => i).filter((i) => !taken.has(i));
-    if (ag && free.length) {
-      const t = free[(rnd() * free.length) | 0];
+    const free = placed.map((_, i) => i).filter((i) => !taken.has(i) && (placed[i].wear || 0) < 100);
+    // Someone on the roster who is not already in.
+    const inside = new Set(crowd.agents.filter((a) => a.on).map((a) => a.member));
+    const away = roster.filter((m) => !inside.has(m.id));
+    const who = away.length ? away[(rnd() * away.length) | 0] : null;
+    if (ag && who && free.length) {
+      const favs = free.filter((i) => placed[i].type === who.fav);
+      const pool = favs.length ? favs : free;
+      const t = pool[(rnd() * pool.length) | 0];
       ag.x = ENTRANCE[0];
       ag.y = ENTRANCE[1] - 0.1;
       ag.target = t;
-      ag.look = (rnd() * MEMBER_LOOKS.length) | 0;
+      ag.member = who.id;
+      ag.look = who.look % MEMBER_LOOKS.length;
       ag.anim = rnd() * 3;
       const p = placed[t];
       if (sendTo(ag, map, placed, accessCell(p.x, p.y, p.rot), "walk")) ag.on = true;

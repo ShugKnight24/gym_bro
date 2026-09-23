@@ -26,4 +26,4 @@ export function rngFor(seed, ...keys) {
 export const newSeed = () => (Math.random() * 2 ** 31) | 0;
 
 /** Salts, so two rolls on the same day never share a stream. */
-export const SALT = { night: 1, event: 2, happening: 3, supps: 4 };
+export const SALT = { night: 1, event: 2, happening: 3, supps: 4, roster: 5 };

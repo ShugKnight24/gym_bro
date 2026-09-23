@@ -365,8 +365,37 @@ export function createGame(canvas, uiRoot) {
     }
   }
 
+  // Drag-to-look: a small dead zone so a click never nudges the view, then the
+  // raw pointer deltas are eased in over ~40 ms so uneven mouse events feel smooth.
+  const dragState = { travel: 0, px: 0, py: 0, out: { x: 0, y: 0 } };
+  function dragLook(dragging, dt) {
+    const d = dragState;
+    if (!dragging) {
+      d.travel = d.px = d.py = 0;
+      return null;
+    }
+    const mx = input.mouse.dx;
+    const my = input.mouse.dy;
+    d.travel += Math.abs(mx) + Math.abs(my);
+    if (d.travel < 4) return null;
+    d.px += mx;
+    d.py += my;
+    const k = 1 - Math.exp(-dt / 0.04);
+    d.out.x = d.px * k;
+    d.out.y = d.py * k;
+    d.px -= d.out.x;
+    d.py -= d.out.y;
+    return d.out;
+  }
+
+  let cursor = "";
+  const setCursor = (c) => {
+    if (c !== cursor) canvas.style.cursor = cursor = c;
+  };
+
   function update(dt, t) {
     input.poll(dt);
+    if (g.mode !== "play") setCursor("");
     g.shake = settings.calm ? 0 : Math.max(0, g.shake - dt * 40);
     updateCallouts(dt);
     syncModeOutputs();
@@ -385,10 +414,12 @@ export function createGame(canvas, uiRoot) {
       g.player.angle = tc.a + Math.sin(t * 0.15) * 0.15;
     } else if (g.mode === "play") {
       // Without pointer lock (denied, embedded browser, Safari quirks) the mouse still looks while the button is held.
-      const drag = !locked && input.mouse.down && input.device !== "touch";
-      if (locked || input.device !== "keyboard" || (drag && (input.mouse.dx || input.mouse.dy))) g.lookHintT = 0;
+      const dragging = !locked && input.mouse.down && input.device !== "touch";
+      const drag = dragLook(dragging, dt);
+      if (locked || input.device !== "keyboard" || drag) g.lookHintT = 0;
       else if (g.lookHintT > 0) g.lookHintT -= dt;
-      updatePlayer(g.player, input, dt, locked || drag, solid);
+      updatePlayer(g.player, input, dt, locked, solid, drag);
+      setCursor(locked ? "" : dragging ? "grabbing" : "grab");
       g.state.time += dt * MIN_PER_SEC;
       g.target = findTarget();
       if (g.target && (input.pressed("use") || input.pressed("alt"))) interact(g.target, input.pressed("alt"));
@@ -433,7 +464,7 @@ export function createGame(canvas, uiRoot) {
     }
     if (g.state && g.mode !== "menu" && g.mode !== "title") {
       const busy = g.mode === "train" && g.trainer.kind === "train" ? g.trainIndex : -1;
-      updateCrowd(g.crowd, dt, g.state.members, g.state.time, map, g.state.gym.placed, busy);
+      updateCrowd(g.crowd, dt, g.state.roster, g.state.time, map, g.state.gym.placed, busy);
     }
     if (g.state) updateBody(dt);
     // Your own reflection would loom behind the bar mid-set; it returns when you walk.

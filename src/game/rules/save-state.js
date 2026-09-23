@@ -11,8 +11,10 @@ import { PRODUCTS } from "./supplements.js";
 import { UPGRADES } from "./economy.js";
 import { BROKEN, DUES_MIN, DUES_MAX } from "./members.js";
 import { clamp } from "./stats.js";
+import { GOALS, LOOK_COUNT, newMember } from "./roster.js";
+import { rngFor, SALT } from "./rng.js";
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v, d, lo = -Infinity, hi = Infinity) => (typeof v === "number" && Number.isFinite(v) ? clamp(v, lo, hi) : d);
@@ -67,7 +69,28 @@ export function normalizeState(raw) {
   s.career.legends = s.career.legends.filter((id) => typeof id === "string" && CAREERS[id]);
   s.supps.launched = [...new Set(s.supps.launched.filter((id) => PRODUCTS[id]))];
   s.supps.ads = clamp(Math.floor(s.supps.ads), 0, 3);
+  s.today.chats = s.today.chats.filter((id) => Number.isInteger(id));
+  s.tips = [...new Set(s.tips.filter((id) => typeof id === "string"))];
+  normalizeRoster(s, raw);
   return s;
+}
+
+/** Valid, unique members, as many as the member count (older saves had only a count). */
+function normalizeRoster(s, raw) {
+  const ids = new Set();
+  s.roster = (Array.isArray(raw.roster) ? raw.roster : []).filter((m) => {
+    if (!isObj(m) || !Number.isInteger(m.id) || ids.has(m.id) || typeof m.name !== "string" || !GOALS[m.goal] || !EQUIPMENT[m.fav]) return false;
+    ids.add(m.id);
+    return true;
+  }).map((m) => ({
+    id: m.id, name: m.name.slice(0, 24), look: clamp(Math.floor(num(m.look, 0)), 0, LOOK_COUNT - 1), goal: m.goal, fav: m.fav,
+    since: Math.max(1, Math.floor(num(m.since, 1))), mood: clamp(num(m.mood, 65), 0, 100),
+  }));
+  let next = Math.max(num(raw.nextId, 1), ...s.roster.map((m) => m.id + 1), 1);
+  if (s.roster.length > s.members) s.roster = s.roster.slice(0, s.members);
+  const rng = rngFor(s.seed, s.day, SALT.roster, 99);
+  while (s.roster.length < s.members) s.roster.push(newMember(next++, s.day, rng));
+  s.nextId = next;
 }
 
 /** Save-slot migration hook: every version goes through normalisation. */
