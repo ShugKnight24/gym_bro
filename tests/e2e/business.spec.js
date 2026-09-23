@@ -74,3 +74,18 @@ test("settings persist: easier timing and a rebound key", async ({ page }) => {
   const s = await page.evaluate(() => ({ assist: window.__game.trainer.assist, gym: window.__game.input.bindings().gym }));
   expect(s).toEqual({ assist: true, gym: ["KeyH"] });
 });
+
+test("members have names in the office, and staff can be hired", async ({ page }) => {
+  await page.evaluate(() => {
+    const g = window.__game;
+    g.setState({ money: 5000, members: 6, career: { ...g.state.career, best: { owner: 2 } } });
+    g.sleep(false);
+    g.next();
+    g.openGym();
+  });
+  const n = await page.locator(".roster li").count();
+  expect(n).toBe(await page.evaluate(() => window.__game.state.members));
+  await click(page, "upgrade", "trainer");
+  await click(page, "upgrade", "receptionist");
+  expect(await page.evaluate(() => window.__game.state.gym.upgrades)).toMatchObject({ trainer: true, receptionist: true });
+});

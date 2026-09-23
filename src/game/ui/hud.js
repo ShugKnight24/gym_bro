@@ -8,6 +8,20 @@ import { plate, text, bar, keycap, memo, font, INK, COLOR } from "./kit.js";
 import { clockText } from "../rules/day.js";
 import { physique, MAX_ENERGY } from "../rules/stats.js";
 import { isModernArt } from "../../engine/art-style.js";
+import { nextTips, tipText, TIPS } from "../rules/tips.js";
+
+// Checklist lines are rebuilt only when the steps or the input device change.
+let tipKey = "";
+let tipLines = [];
+function tipsFor(g) {
+  const tips = nextTips(g.state);
+  const key = tips.map((t) => t.id).join() + g.keyLabel("use");
+  if (key !== tipKey) {
+    tipKey = key;
+    tipLines = tips.map((t) => tipText(t, (a) => g.keyLabel(a)));
+  }
+  return tipLines;
+}
 
 const fmtDay = memo((d) => `DAY ${d}`);
 const fmtClock = memo((m) => clockText(m));
@@ -67,6 +81,14 @@ function drawPlates(ctx, vw, vh, g, target, locked) {
   text(ctx, fmtEnd(st.end), 266, 149, 14, light, "right");
   text(ctx, "PHYSIQUE", 28, 173, 13, light);
   text(ctx, fmtPhys(physique(st)), 266, 173, 16, modern ? "#e3c682" : COLOR.red, "right");
+
+  // First-days checklist, until it is done (or turned off in settings).
+  const tips = g.settings.tips === false ? [] : tipsFor(g);
+  if (tips.length) {
+    plate(ctx, 16, 200, 262, 30 + tips.length * 22, "cream");
+    text(ctx, `GETTING STARTED ${TIPS.length - nextTips(s, 99).length}/${TIPS.length}`, 28, 216, 12, modern ? "#e3c682" : COLOR.red);
+    for (let i = 0; i < tips.length; i++) text(ctx, `▸ ${tips[i]}`, 28, 239 + i * 22, 13, light);
+  }
 
   // Gym roster.
   const rx = vw - 196;

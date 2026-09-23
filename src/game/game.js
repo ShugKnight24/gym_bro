@@ -433,7 +433,7 @@ export function createGame(canvas, uiRoot) {
     }
     if (g.state && g.mode !== "menu" && g.mode !== "title") {
       const busy = g.mode === "train" && g.trainer.kind === "train" ? g.trainIndex : -1;
-      updateCrowd(g.crowd, dt, g.state.members, g.state.time, map, g.state.gym.placed, busy);
+      updateCrowd(g.crowd, dt, g.state.roster, g.state.time, map, g.state.gym.placed, busy);
     }
     if (g.state) updateBody(dt);
     // Your own reflection would loom behind the bar mid-set; it returns when you walk.

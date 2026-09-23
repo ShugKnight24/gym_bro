@@ -15,6 +15,7 @@ import { clockText, gymReport } from "../rules/day.js";
 import { isBroken } from "../rules/members.js";
 import { UPGRADES, UPGRADE_IDS, ADS, upgradeStatus, repairCost } from "../rules/economy.js";
 import { PRODUCTS, PRODUCT_IDS, launchStatus, hasProduct } from "../rules/supplements.js";
+import { GOALS, memberMood, favStatus } from "../rules/roster.js";
 import { portraitSvg } from "../art/figures.js";
 import { isModernArt } from "../../engine/art-style.js";
 
@@ -222,11 +223,31 @@ export function showSummary(sum, g, h) {
           <div>Physique <b>${sum.phys.toFixed(1)}</b></div>
         </div>
         ${reasons}
+        ${peopleBlock(sum)}
         <h3>Recovery</h3>${fatigueRows(sum.fatigue)}
         <p class="hint">Game saved. Day ${g.day} starts at ${clockText(g.time)}.</p>
         <div class="buttons"><button class="primary" data-act="close">Rise and grind</button></div>
       </div>
     </div>`, h);
+}
+
+/** Who walked in and who walked out overnight, in their own words. */
+function peopleBlock(sum) {
+  if (!sum.joinedNames?.length && !sum.left?.length) return "";
+  const joined = sum.joinedNames.length ? `<p class="people"><b>Joined:</b> ${sum.joinedNames.map(esc).join(", ")}</p>` : "";
+  const left = sum.left.map((l) => `<li><b>${esc(l.name)}</b> left: “${esc(l.why)}”</li>`).join("");
+  return `<h3>People</h3>${joined}${left ? `<ul class="reasons quits">${left}</ul>` : ""}`;
+}
+
+/** Roster table for the gym office, unhappiest first. */
+function rosterBlock(g) {
+  const rows = g.roster
+    .map((m) => ({ m, mood: memberMood(m, g, g.sat), fav: favStatus(m, g.gym.placed) }))
+    .sort((a, b) => a.mood - b.mood)
+    .map(({ m, mood, fav }) => `<li><span><b>${esc(m.name)}</b> <small>${GOALS[m.goal].name} · since day ${m.since}</small></span>
+      <small class="${fav === "ok" ? "" : "want"}">${esc(EQUIPMENT[m.fav].name)}${fav === "ok" ? "" : fav === "broken" ? " (broken)" : " (missing)"}</small>
+      ${meter(mood / 100, mood < 40 ? "fatigue" : "")}<small>${mood}%</small></li>`).join("");
+  return `<h3>Members <small>unhappiest first; the least happy leave first</small></h3><ul class="roster">${rows || "<li>No members yet.</li>"}</ul>`;
 }
 
 /** The business: members, pricing, machines, upgrades. */
@@ -264,9 +285,10 @@ export function showGym(g, ownerRank, h) {
         <button data-act="dues" data-arg="1">+1</button><button data-act="dues" data-arg="5">+5</button>
         <small>${r.demand >= 1.05 ? "Bargain: sign-ups up" : r.demand <= 0.8 ? "Pricey: sign-ups down, members grumble" : "Market rate"}</small>
       </div>
+      ${rosterBlock(g)}
       <h3>Machines <small>wear builds with use; broken machines draw no one</small></h3>
       <ul class="machines">${machines || "<li>No equipment yet. Press Tab to build.</li>"}</ul>
-      <h3>Upgrades</h3>
+      <h3>Staff &amp; upgrades</h3>
       <ul class="products">${ups}</ul>
       <div class="buttons"><button class="primary" data-act="close">Back to the gym</button></div>
     </div>`, h);
@@ -314,6 +336,7 @@ export function showSettings(st, bindings, h, capturing = "") {
       <h3>Accessibility</h3>
       ${toggle("assist", "Easier timing", "Slower rep cursor, wider sweet spot")}
       ${toggle("calm", "Reduce motion", "No screen shake or hit-stop")}
+      ${toggle("tips", "Getting-started tips", "The checklist under your stats")}
       <h3>Keys <small>click an action, then press the new key (Esc cancels)</small></h3>
       <ul class="keys">${keys}</ul>
       <div class="buttons"><button data-act="resetKeys">Reset keys</button><button class="primary" data-act="close">Back</button></div>

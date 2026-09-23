@@ -163,3 +163,10 @@ button:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
   .set small { display: none; }
 }
 .set button { justify-self: start; min-width: 80px; }
+.roster { list-style: none; padding: 0; margin: 6px 0 0; max-height: 220px; overflow: auto; }
+.roster li { display: grid; grid-template-columns: 1fr 150px 100px 40px; gap: 10px; align-items: center; font-size: 13px; margin: 4px 0; }
+.roster small { opacity: .8; }
+.roster .want { color: var(--red); font-weight: 800; opacity: 1; }
+.people { font-size: 14px; margin: 4px 0; }
+.quits li::before { content: "✕ "; color: var(--red); }
+@media (max-width: 640px) { .roster li { grid-template-columns: 1fr 90px 40px; } .roster li > small:first-of-type { display: none; } }

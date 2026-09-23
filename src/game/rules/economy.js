@@ -8,7 +8,9 @@ import { BROKEN, isBroken } from "./members.js";
 
 /** One-off purchases. `owner` is the Gym Owner rank that unlocks it. */
 export const UPGRADES = {
-  cleaner: { name: "Hire a cleaner", cost: 0, daily: 30, owner: 1, desc: "Keeps the gym at least 85% clean every morning. $30/day." },
+  cleaner: { name: "Hire a cleaner", cost: 0, daily: 30, owner: 1, staff: true, desc: "Keeps the gym at least 85% clean every morning. $30/day." },
+  trainer: { name: "Hire a personal trainer", cost: 0, daily: 60, owner: 1, staff: true, desc: "Lifters and physique members are happier, and the market accepts $3 more dues. $60/day." },
+  receptionist: { name: "Hire a receptionist", cost: 0, daily: 35, owner: 2, staff: true, desc: "A friendly front desk: +4 satisfaction and one extra sign-up a night. $35/day." },
   annex: { name: "Open the east annex", cost: 3000, daily: 45, owner: 2, desc: "Knock through the east wall: a whole new training room. +$45/day rent." },
   bed: { name: "Memory foam bed", cost: 1200, daily: 0, owner: 0, desc: "Sleep deeper: muscles recover faster every night." },
 };
@@ -29,7 +31,7 @@ export function dailyCosts(g) {
   let upkeep = 0;
   for (const id of UPGRADE_IDS) {
     if (!g.gym.upgrades[id]) continue;
-    if (id === "cleaner") staff += UPGRADES[id].daily;
+    if (UPGRADES[id].staff) staff += UPGRADES[id].daily;
     else upkeep += UPGRADES[id].daily;
   }
   const ads = ADS[g.supps.ads]?.cost || 0;
@@ -39,7 +41,7 @@ export function dailyCosts(g) {
 /** Can the player buy this upgrade now? { ok, reason }. */
 export function upgradeStatus(g, id, ownerRank) {
   const u = UPGRADES[id];
-  if (g.gym.upgrades[id]) return { ok: false, reason: id === "cleaner" ? "Hired" : "Owned" };
+  if (g.gym.upgrades[id]) return { ok: false, reason: u.staff ? "Hired" : "Owned" };
   if (ownerRank < u.owner) return { ok: false, reason: `Needs Gym Owner rank ${u.owner}` };
   if (g.money < u.cost) return { ok: false, reason: `Need $${u.cost}` };
   return { ok: true, reason: "" };

@@ -10,6 +10,7 @@ import { DUES_MIN, DUES_MAX } from "./rules/members.js";
 import { repair, buyUpgrade, upgradeStatus } from "./rules/economy.js";
 import { launch, launchStatus, setAds } from "./rules/supplements.js";
 import { COLOR } from "./ui/kit.js";
+import { markTip } from "./rules/tips.js";
 import { showPause, showCareers, showStats, showShop, showGym, showSettings, hideOverlay } from "./ui/overlays.js";
 
 /**
@@ -101,7 +102,10 @@ export function createMenus(g, env) {
       openGym();
     },
   };
-  const openGym = () => openMenu(() => showGym(g.state, careerRank(g.state, "owner"), gymHandlers));
+  const openGym = () => {
+    g.state = markTip(g.state, "office");
+    openMenu(() => showGym(g.state, careerRank(g.state, "owner"), gymHandlers));
+  };
 
   function openSettings(back = resume, capturing = "") {
     const vol = { master: audio.volume("master"), music: audio.volume("music"), sfx: audio.volume("sfx") };

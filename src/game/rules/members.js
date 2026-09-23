@@ -53,7 +53,7 @@ export const DUES_MAX = 60;
  * Member satisfaction 0-100 from crowding, cleanliness, broken machines,
  * price against the fair rate and equipment variety.
  */
-export function satisfaction({ members, cap, clean, broken, dues, fair, distinct }) {
+export function satisfaction({ members, cap, clean, broken, dues, fair, distinct, unmet = 0, desk = false }) {
   const crowd = cap ? members / cap : members ? 2 : 0;
   let s = 66;
   s -= Math.max(0, crowd - 0.75) * 120;
@@ -61,12 +61,16 @@ export function satisfaction({ members, cap, clean, broken, dues, fair, distinct
   s -= broken * 8;
   s += clamp((fair - dues) * 1.5, -30, 12);
   s += Math.min(distinct, 8) * 2 - 6;
+  // Members whose favourite machine is missing or broken drag the mood down.
+  s -= unmet * 14;
+  if (desk) s += 4;
   return clamp(Math.round(s), 0, 100);
 }
 
 /** Why members feel the way they do, worst first. */
-export function satisfactionReasons({ members, cap, clean, broken, dues, fair }, sat) {
+export function satisfactionReasons({ members, cap, clean, broken, dues, fair, unmet = 0, wanted = "" }, sat) {
   const r = [];
+  if (unmet >= 0.25 && wanted) r.push(`Members keep asking for a ${wanted}`);
   if (cap && members / cap > 0.9) r.push("Too crowded: add equipment");
   if (broken) r.push(`${broken} broken machine${broken > 1 ? "s" : ""}: repair at the machine (F)`);
   if (clean < 50) r.push("The gym is dirty: clean at the desk");
@@ -79,11 +83,11 @@ export function satisfactionReasons({ members, cap, clean, broken, dues, fair },
  * Overnight roster: unhappy members quit, new ones join toward the target,
  * happy gyms grow a little faster. Returns { join, quit }.
  */
-export function rosterChange(members, target, sat) {
+export function rosterChange(members, target, sat, extraJoins = 0) {
   const unhappy = Math.min(members, Math.max(0, Math.round((members * (55 - sat)) / 150)));
   const left = members - unhappy;
   const room = target - left;
-  const join = room > 0 ? Math.min(room, sat >= 80 ? 4 : 3) : 0;
+  const join = room > 0 ? Math.min(room, (sat >= 80 ? 4 : 3) + extraJoins) : 0;
   const trim = room < 0 ? Math.min(-room, 2) : 0;
   return { join, quit: unhappy + trim };
 }

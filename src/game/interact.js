@@ -1,6 +1,6 @@
 /**
- * What the player is looking at and what E / F do with it: equipment
- * (train, repair), the desk (clean), the vending machine (shop, quick
+ * What the player is looking at and what E / F do with it: a member (chat),
+ * equipment (train, repair), the desk (clean), the vending machine (shop, quick
  * shake) and the home door (sleep). Targets are reused objects whose text
  * is rebuilt only when something it shows changes.
  */
@@ -11,6 +11,9 @@ import { consume, setCost } from "./rules/stats.js";
 import { isBroken } from "./rules/members.js";
 import { repair, repairCost } from "./rules/economy.js";
 import { hasProduct } from "./rules/supplements.js";
+import { GOALS, memberLine } from "./rules/roster.js";
+import { gymReport } from "./rules/day.js";
+import { markTip } from "./rules/tips.js";
 import { startTrainer } from "./train.js";
 import { COLOR } from "./ui/kit.js";
 
@@ -23,6 +26,8 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
   const T_DOOR = { kind: "door", label: "Sleep: end the day", alt: "", note: "Collect dues, pay the bills, recover, autosave" };
   const T_DESK = { kind: "desk", label: "Clean the gym (10 energy)", alt: "", note: "" };
   const T_VEND = { kind: "vending", label: "Shop", alt: "", note: "" };
+  const T_MEMBER = { kind: "member", id: -1, label: "", alt: "", note: "" };
+  let lastMemberKey = "";
   let lastEquip = -1;
   let lastEquipKey = "";
   let lastClean = -1;
@@ -34,11 +39,50 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
     return out;
   };
 
+  /** The closest walker roughly under the crosshair, within chatting range. */
+  function memberAhead(p, dx, dy) {
+    let best = null;
+    let bestD = 1.9;
+    for (const ag of g.crowd.agents) {
+      if (!ag.on || ag.member < 0) continue;
+      const vx = ag.x - p.x;
+      const vy = ag.y - p.y;
+      const d = Math.hypot(vx, vy);
+      if (d < 0.3 || d > bestD) continue;
+      const along = vx * dx + vy * dy;
+      if (along <= 0 || Math.abs(vx * dy - vy * dx) > 0.35) continue;
+      best = ag;
+      bestD = d;
+    }
+    return best;
+  }
+
+  function memberTarget(ag) {
+    const s = g.state;
+    const m = s.roster.find((r) => r.id === ag.member);
+    if (!m) return null;
+    const chatted = s.today.chats.includes(m.id);
+    // Rebuild the words only when who, or what they would complain about, changes.
+    const key = `${m.id}|${chatted}|${s.gym.clean >> 3}|${s.dues}|${s.gym.placed.length}|${s.gym.placed.reduce((n, p) => n + (p.wear >= 100 ? 1 : 0), 0)}`;
+    if (key !== lastMemberKey) {
+      lastMemberKey = key;
+      T_MEMBER.id = m.id;
+      T_MEMBER.label = chatted ? `${m.name} · ${GOALS[m.goal].name}` : `Chat: ${m.name} · ${GOALS[m.goal].name}`;
+      T_MEMBER.note = `"${memberLine(m, s, EQUIPMENT, s.dues, gymReport(s).fair)}"`;
+    }
+    return T_MEMBER;
+  }
+
   function findTarget() {
     const p = g.player;
     const map = g.map;
     const dx = Math.cos(p.angle);
     const dy = Math.sin(p.angle);
+    const ag = memberAhead(p, dx, dy);
+    if (ag) {
+      const t = memberTarget(ag);
+      if (t) return t;
+    }
     for (let d = 0.3; d <= 1.9; d += 0.1) {
       const cx = Math.floor(p.x + dx * d);
       const cy = Math.floor(p.y + dy * d);
@@ -104,6 +148,13 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
 
   function interact(t, alt) {
     const s = g.state;
+    if (t.kind === "member") {
+      if (alt || s.today.chats.includes(t.id)) return;
+      g.state = markTip({ ...s, today: { ...s.today, chats: [...s.today.chats, t.id] } }, "chat");
+      audio.play("ui");
+      pop("GOOD VIBES!", COLOR.green);
+      return;
+    }
     if (t.kind === "equip") {
       const pl = s.gym.placed[t.index];
       const eq = EQUIPMENT[pl.type];
@@ -134,7 +185,7 @@ export function createInteraction(g, { audio, pop, sleep, openShop }) {
       sleep(false);
     } else if (t.kind === "desk" && !alt) {
       if (s.stats.energy < 10) return pop("TOO TIRED!", "#a8b0bc");
-      g.state = { ...s, time: s.time + 30, stats: { ...s.stats, energy: s.stats.energy - 10 }, gym: { ...s.gym, clean: 100 } };
+      g.state = markTip({ ...s, time: s.time + 30, stats: { ...s.stats, energy: s.stats.energy - 10 }, gym: { ...s.gym, clean: 100 } }, "clean");
       pop("SPARKLING!", COLOR.cyan);
     } else if (t.kind === "vending") {
       if (alt) buy("shake");
