@@ -326,6 +326,7 @@ export function createGame(canvas, uiRoot) {
     hideOverlay();
     g.mode = "play";
     g.lookHintT = input.device === "keyboard" ? 6 : 0;
+    g.hoverArmed = false;
     pop(`DAY ${g.state.day}`, COLOR.yellow);
   }
 
@@ -438,7 +439,10 @@ export function createGame(canvas, uiRoot) {
       // Without pointer lock (refused by embedded browsers, some Safari setups) the view follows the
       // cursor, and resting it near a side edge keeps turning; "Hold to look" restores click-and-drag.
       const mouseLook = !locked && input.device !== "touch";
-      const hover = mouseLook && !settings.dragLook && input.mouse.inside;
+      // Edge turning waits for real mouse movement in play, so a cursor that happens to rest at a
+      // screen edge (or a pointer that never moved) does not spin the view.
+      if (input.mouse.dx || input.mouse.dy) g.hoverArmed = true;
+      const hover = mouseLook && !settings.dragLook && input.mouse.inside && g.hoverArmed;
       const dragging = mouseLook && input.mouse.down;
       const drag = dragLook(hover || dragging, dt, hover ? 0 : 4);
       const edge = hover ? edgeTurn(input.mouse.x / (g.view.w || 1)) : 0;
