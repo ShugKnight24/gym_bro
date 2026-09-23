@@ -9,54 +9,70 @@
  */
 
 import { createInput } from "../engine/input.js";
-import { createSave } from "../engine/save.js";
+import { createTouchControls } from "../engine/touch-controls.js";
+import { createAudio } from "../engine/audio.js";
 import { createRaycaster } from "../engine/raycaster.js";
 import { setShadeColor, warmSvgSprites } from "../engine/sprite.js";
 import { isModernArt, setArtStyle, onArtStyleChange, ART_COMIC, ART_MODERN } from "../engine/art-style.js";
-import { buildMap, PROPS, SPAWN, WALL } from "./world/map.js";
+import { buildMap, SPAWN } from "./world/map.js";
 import { buildTextures } from "./world/textures.js";
 import { createPlayer, updatePlayer, cameraOf } from "./world/player.js";
 import { createCrowd, updateCrowd, resetCrowd } from "./world/members.js";
 import { createScene, rebuildScene, updateScene, playerSprite, worldSet, memberSprite } from "./world/scene.js";
-import { EQUIPMENT, SHOP } from "./data/equipment.js";
+import { EQUIPMENT } from "./data/equipment.js";
 import { EVENTS } from "./data/events.js";
 import { MEMBER_LOOKS } from "./art/figures.js";
 import { newGame as freshState, endDay, SET_MINUTES, DAY_END, gymAppeal, STARTER_GYM } from "./rules/day.js";
-import { trainSet, consume, setCost, TIERS } from "./rules/stats.js";
+import { trainSet, TIERS } from "./rules/stats.js";
 import { placementError, findAt, sellValue } from "./rules/build.js";
-import { eligibility, eventScore, resolveEvent, applyEvent } from "./rules/compete.js";
+import { eligibility, eventScore, awardScore, resolveEvent, applyEvent } from "./rules/compete.js";
+import { rngFor, SALT } from "./rules/rng.js";
+import { createPersistence } from "./persist.js";
+import { createInteraction } from "./interact.js";
+import { createMenus } from "./menus.js";
 import { createTrainer, startTrainer, updateTrainer, drawViewmodel, drawTrainerHud, trainerCamDz } from "./train.js";
+import { PERFECT, GOOD } from "./rules/timing.js";
 import { drawHud } from "./ui/hud.js";
 import { createBuild, updateBuild, drawBuild, flash } from "./ui/build.js";
 import { callout, updateCallouts, drawCallouts, clearCallouts } from "./ui/callouts.js";
 import { cached, blit, COLOR } from "./ui/kit.js";
-import {
-  initOverlays, showTitle, showPause, showCareers, showStats, showSummary, showResults, hideOverlay, overlayOpen,
-} from "./ui/overlays.js";
+import { initOverlays, showTitle, showSummary, showResults, showLegend, hideOverlay, overlayOpen } from "./ui/overlays.js";
 
 const BINDINGS = {
   forward: ["KeyW", "ArrowUp"], back: ["KeyS", "ArrowDown"], left: ["KeyA"], right: ["KeyD"],
   turnL: ["ArrowLeft"], turnR: ["ArrowRight"], run: ["ShiftLeft", "ShiftRight"],
-  use: ["KeyE"], alt: ["KeyF"], rep: ["Space"], build: ["Tab"], careers: ["KeyC"], stats: ["KeyP"],
-  pause: ["Escape"], rotate: ["KeyR"],
-  slot1: ["Digit1"], slot2: ["Digit2"], slot3: ["Digit3"], slot4: ["Digit4"], slot5: ["Digit5"], slot6: ["Digit6"], slot7: ["Digit7"],
+  use: ["KeyE"], alt: ["KeyF"], rep: ["Space"], build: ["Tab"], careers: ["KeyC"], stats: ["KeyP"], gym: ["KeyG"],
+  pause: ["Escape"], rotate: ["KeyR"], pageNext: ["KeyQ"],
+  slot1: ["Digit1"], slot2: ["Digit2"], slot3: ["Digit3"], slot4: ["Digit4"], slot5: ["Digit5"], slot6: ["Digit6"],
+  slot7: ["Digit7"], slot8: ["Digit8"], slot9: ["Digit9"],
 };
+
+/** On-screen prompt labels per input device. */
+const PAD_KEYS = { use: "A", alt: "X", build: "LB", careers: "Y", stats: "BACK", pause: "START", gym: "START", rep: "A" };
+const TOUCH_KEYS = { use: "USE", alt: "ALT", build: "BUILD", careers: "CAREERS", stats: "STATS", pause: "II", gym: "II", rep: "REP" };
 
 /** Game minutes per real second while walking around. */
 const MIN_PER_SEC = 2;
 const FOG = { comic: [34, 40, 54], modern: [30, 28, 26] };
+const HIT_STOP = 0.14;
 
 export function createGame(canvas, uiRoot) {
   const input = createInput(canvas, BINDINGS);
-  const save = createSave("gymbro_save", 1);
-  const map = buildMap();
+  const touch = createTouchControls(input);
+  // A touch device starts with touch prompts, before the first tap.
+  if (touch.el) input.device = "touch";
+  const audio = createAudio();
+  const store = createPersistence();
+  const settings = store.settings();
+  if (settings.bindings) input.setBindings({ ...BINDINGS, ...settings.bindings });
+  let map = buildMap();
   const rc = createRaycaster({ fov: 75, wallH: 1.5, cm: 200, fogNear: 3, fogFar: 20, fogMax: 0.62 });
   rc.setWorld(map);
-  const occ = new Int16Array(map.w * map.h); // placed index + 1 per cell
+  let occ = new Int16Array(map.w * map.h); // placed index + 1 per cell
   const cam = { x: 0, y: 0, angle: 0, z: 0.8, pitch: 0 };
   const renderOpts = { ink: true };
-  let suppressPause = false;
   let fogCss = "#000";
+  let lastMode = "";
 
   const g = {
     mode: "title",
@@ -68,16 +84,48 @@ export function createGame(canvas, uiRoot) {
     build: createBuild(),
     target: null,
     shake: 0,
+    hitStop: 0,
     flexT: 0,
     body: null,
     bodyKey: -1,
     pending: null,
+    queue: [],
     lookHintT: 0,
     trainIndex: -1,
     titleCam: { x: 13, y: 4, a: Math.PI * 0.8 },
     view: { w: 1280, h: 720 },
+    settings,
     rc,
-    map,
+    get map() { return map; },
+    get occ() { return occ; },
+    keyLabel(action) {
+      if (input.device === "gamepad") return PAD_KEYS[action] || "?";
+      if (input.device === "touch") return TOUCH_KEYS[action] || "?";
+      const code = input.bindings()[action]?.[0] || "";
+      return code.replace(/^Key/, "").replace(/^Digit/, "").replace("Escape", "ESC").replace("Space", "SPACE").toUpperCase();
+    },
+  };
+
+  const applySettings = () => {
+    g.trainer.assist = settings.assist;
+    g.trainer.calm = settings.calm;
+    g.player.sens = settings.sens;
+    g.player.invertY = settings.invertY;
+  };
+  applySettings();
+
+  const interaction = createInteraction(g, { audio, pop, sleep, openShop: () => menus.openShop() });
+  const menus = createMenus(g, {
+    audio, store, input, settings, uiRoot, defaultBindings: BINDINGS, applySettings, refreshGym, pop, persist,
+    toTitle, toggleStyle, enterEvent, prices: interaction.prices, buy: interaction.buy, invalidateTarget: interaction.invalidate,
+  });
+  const { findTarget, interact } = interaction;
+  const { releaseMouse, openMenu, resume, next, openPause, openCareers, openStats, openShop, openGym, openSettings } = menus;
+
+  // Rep feedback: sound per judged rep, and a hit-stop on a perfect set's last rep.
+  g.trainer.onRep = (h, combo) => {
+    audio.play(h === PERFECT ? "rep_perfect" : h === GOOD ? "rep_good" : "rep_miss", { pitch: h ? Math.min(combo, 8) * 0.5 : 0 });
+    if (h) audio.play("clank", { gain: 0.4 });
   };
 
   // ── World and style ────────────────────────────────────────────────────
@@ -96,11 +144,22 @@ export function createGame(canvas, uiRoot) {
     g.bodyKey = -1;
   }
 
+  /** Switch between the starter room and the room with the east annex open. */
+  function syncMap() {
+    const annex = !!g.state?.gym.upgrades.annex;
+    if (annex === map.w > 16) return;
+    map = buildMap(annex);
+    rc.setWorld(map);
+    occ = new Int16Array(map.w * map.h);
+    resetCrowd(g.crowd);
+  }
+
   function refreshGym() {
+    syncMap();
     occ.fill(0);
     const placed = g.state ? g.state.gym.placed : STARTER_GYM;
     for (let i = 0; i < placed.length; i++) occ[placed[i].y * map.w + placed[i].x] = i + 1;
-    lastEquip = -1;
+    interaction.invalidate();
     rebuildScene(g.scene, placed, isModernArt());
   }
 
@@ -128,92 +187,32 @@ export function createGame(canvas, uiRoot) {
     }
   }
 
-  // ── Interaction targets ────────────────────────────────────────────────
-  const T_EQUIP = { kind: "equip", index: -1, label: "", alt: "", note: "" };
-  const T_DOOR = { kind: "door", label: "Sleep: end the day", alt: "", note: "Collect dues, recover, autosave" };
-  const T_DESK = { kind: "desk", label: "Clean the gym (10 energy)", alt: "", note: "" };
-  const T_VEND = { kind: "vending", label: `${SHOP.shake.name} $${SHOP.shake.price}`, alt: `${SHOP.snack.name} $${SHOP.snack.price}`, note: "" };
-  let lastEquip = -1;
-  let lastEnergyLow = false;
-  let lastClean = -1;
-
-  function findTarget() {
-    const p = g.player;
-    const dx = Math.cos(p.angle);
-    const dy = Math.sin(p.angle);
-    for (let d = 0.3; d <= 1.9; d += 0.1) {
-      const cx = Math.floor(p.x + dx * d);
-      const cy = Math.floor(p.y + dy * d);
-      const i = cy * map.w + cx;
-      const wall = map.walls[i];
-      if (wall) return wall === WALL.DOOR && d < 1.5 ? T_DOOR : null;
-      if (occ[i]) {
-        const idx = occ[i] - 1;
-        const eq = EQUIPMENT[g.state.gym.placed[idx].type];
-        const low = g.state.stats.energy < setCost(eq, 0);
-        if (idx !== lastEquip || low !== lastEnergyLow) {
-          lastEquip = idx;
-          lastEnergyLow = low;
-          T_EQUIP.label = `Train: ${eq.name}`;
-          T_EQUIP.note = low ? "Too tired! Eat, drink or sleep." : `${setCost(eq, 1)} energy per working set`;
-        }
-        T_EQUIP.index = idx;
-        return T_EQUIP;
-      }
-      if (map.blocked[i]) {
-        for (const pr of PROPS) {
-          if (!pr.act || Math.floor(pr.x) !== cx || Math.floor(pr.y) !== cy) continue;
-          if (pr.act === "vending") return T_VEND;
-          if (lastClean !== g.state.gym.clean) {
-            lastClean = g.state.gym.clean;
-            T_DESK.note = `Cleanliness ${g.state.gym.clean}% · members like a clean gym`;
-          }
-          return T_DESK;
-        }
-        return null;
-      }
-    }
-    return null;
-  }
-
   function pop(msg, color = COLOR.yellow, burst = true) {
     callout(msg, g.view.w / 2, g.view.h * 0.4, { burst, color, size: 30 });
   }
 
-  function interact(t, alt) {
-    const s = g.state;
-    if (t.kind === "equip" && !alt) {
-      const type = s.gym.placed[t.index].type;
-      if (s.stats.energy < setCost(EQUIPMENT[type], 0)) return pop("TOO TIRED!", "#a8b0bc");
-      startTrainer(g.trainer, "train", type);
-      g.trainIndex = t.index;
-      g.mode = "train";
-    } else if (t.kind === "door" && !alt) {
-      sleep(false);
-    } else if (t.kind === "desk" && !alt) {
-      if (s.stats.energy < 10) return pop("TOO TIRED!", "#a8b0bc");
-      g.state = { ...s, time: s.time + 30, stats: { ...s.stats, energy: s.stats.energy - 10 }, gym: { ...s.gym, clean: 100 } };
-      pop("SPARKLING!", COLOR.cyan);
-    } else if (t.kind === "vending") {
-      const item = alt ? SHOP.snack : SHOP.shake;
-      if (s.money < item.price) return pop("BROKE!", "#a8b0bc");
-      g.state = {
-        ...s, money: s.money - item.price, stats: consume(s.stats, item),
-        today: { ...s.today, spent: s.today.spent + item.price, boost: Math.max(s.today.boost, item.boost) },
-      };
-      pop(`+${item.energy} ENERGY`, COLOR.green);
-    }
+  // ── Day, training and events ───────────────────────────────────────────
+  function persist(state) {
+    const ok = store.write(state);
+    if (!ok) pop("SAVE FAILED: STORAGE FULL OR BLOCKED", COLOR.red, false);
+    return ok;
   }
 
-  // ── Day, training and events ───────────────────────────────────────────
   function sleep(passedOut) {
     const { state, summary } = endDay(g.state, passedOut);
-    g.state = state;
-    save.write({ state });
+    // Top ranks earned tonight become legends, shown after the summary.
+    const tops = summary.ups.filter((u) => u.top && !state.career.legends.includes(u.id));
+    g.state = tops.length ? { ...state, career: { ...state.career, legends: [...state.career.legends, ...tops.map((u) => u.id)] } } : state;
+    persist(g.state);
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
-    openMenu(() => showSummary(summary, state, { close: resume }));
+    audio.play("sleep");
+    if (summary.news?.sound) audio.play(summary.news.sound);
+    if (summary.ups.length) audio.play("fanfare");
+    g.queue = tops.map((u) => () => openMenu(() => showLegend(u, g.state, { close: next })));
+    openMenu(() => showSummary(summary, g.state, { close: next }));
   }
 
   function finishSet(q) {
@@ -222,13 +221,22 @@ export function createGame(canvas, uiRoot) {
     const eq = EQUIPMENT[tr.type];
     const r = trainSet(s.stats, eq, q, tr.tier, s.today.boost);
     if (!r) return;
+    const perfect = q >= 1.2;
     g.state = {
       ...s, stats: r.stats, time: s.time + SET_MINUTES,
-      today: { ...s.today, sets: s.today.sets + 1, str: s.today.str + r.gains.str, end: s.today.end + r.gains.end },
+      today: { ...s.today, sets: s.today.sets + 1, str: s.today.str + r.gains.str, end: s.today.end + r.gains.end, perfect: s.today.perfect + (perfect ? 1 : 0) },
     };
     const cx = g.view.w / 2;
     const y = g.view.h * 0.55;
     let k = 0;
+    if (perfect) {
+      audio.play("pr");
+      callout("PERFECT SET!", cx, g.view.h * 0.3, { burst: true, size: 44, color: COLOR.yellow, life: 1.6 });
+      if (!settings.calm) {
+        g.hitStop = HIT_STOP;
+        g.shake = 14;
+      }
+    }
     if (r.gains.str >= 0.01) callout(`+${r.gains.str.toFixed(2)} STR`, cx - 160, y, { size: 30, color: COLOR.red, life: 1.8, rot: -0.08 }), k++;
     if (r.gains.end >= 0.01) callout(`+${r.gains.end.toFixed(2)} END`, cx + 160, y, { size: 30, color: "#5aa0ff", life: 1.8, rot: 0.08 }), k++;
     for (const m in r.gains.mus) {
@@ -239,50 +247,34 @@ export function createGame(canvas, uiRoot) {
     g.bodyKey = -1;
   }
 
+  const eventRng = (id) => rngFor(g.state.seed, g.state.day, SALT.event, g.state.career.results.length, id.length);
+
   function finishEvent(q) {
     const tr = g.trainer;
     const e = EVENTS[tr.eventId];
-    const res = resolveEvent(tr.eventId, eventScore(e.kind, g.state.stats, q), Math.random);
+    const res = resolveEvent(tr.eventId, eventScore(e.kind, g.state.stats, q), eventRng(tr.eventId));
     g.state = applyEvent(g.state, tr.eventId, res);
     g.pending = { id: tr.eventId, res };
+    audio.play(res.place === 1 ? "fanfare" : "cheer");
   }
 
   function enterEvent(id) {
     const el = eligibility(g.state, id);
     if (!el.ok) return;
-    hideOverlay();
-    startTrainer(g.trainer, EVENTS[id].kind, "", id);
-    g.mode = "train";
-    pop(EVENTS[id].kind === "show" ? "SHOWTIME!" : "LIFT OFF!", COLOR.yellow);
-  }
-
-  // ── Menus ──────────────────────────────────────────────────────────────
-  function releaseMouse() {
-    if (document.pointerLockElement) {
-      suppressPause = true;
-      document.exitPointerLock();
+    const e = EVENTS[id];
+    if (e.kind === "award") {
+      // Awards judge the gym itself: no minigame, straight to the results.
+      const res = resolveEvent(id, awardScore(g.state, gymAppeal(g.state)), eventRng(id));
+      g.state = applyEvent(g.state, id, res);
+      audio.play(res.place === 1 ? "fanfare" : "cheer");
+      openMenu(() => showResults(id, res, g.state, { close: resume }));
+      return;
     }
-  }
-
-  function openMenu(render) {
-    releaseMouse();
-    g.mode = "menu";
-    render();
-  }
-
-  function resume() {
     hideOverlay();
-    g.mode = "play";
+    startTrainer(g.trainer, e.kind, "", id);
+    g.mode = "train";
+    pop(e.kind === "show" ? "SHOWTIME!" : "LIFT OFF!", COLOR.yellow);
   }
-
-  const openPause = () => openMenu(() => showPause({
-    resume,
-    style: toggleStyle,
-    save: () => { save.write({ state: g.state }); pop("SAVED", COLOR.green, false); resume(); },
-    quit: () => { save.write({ state: g.state }); toTitle(); },
-  }));
-  const openCareers = () => openMenu(() => showCareers(g.state, { close: resume, enter: enterEvent }));
-  const openStats = () => openMenu(() => showStats(g.state, { close: resume }));
 
   function toggleStyle() {
     setArtStyle(isModernArt() ? ART_COMIC : ART_MODERN);
@@ -298,8 +290,8 @@ export function createGame(canvas, uiRoot) {
   function toTitle() {
     releaseMouse();
     g.mode = "title";
-    showTitle(!!save.load(), {
-      continue: () => { const d = save.load(); if (d) start(d.state); },
+    showTitle(!!store.load(), {
+      continue: () => { const st = store.load(); if (st) start(st); },
       new: () => start(freshState()),
       style: toggleStyle,
     });
@@ -308,14 +300,17 @@ export function createGame(canvas, uiRoot) {
   function start(state) {
     const { v, ...clean } = state;
     g.state = clean;
+    g.queue = [];
+    syncMap();
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
     g.bodyKey = -1;
     updateBody(0);
     hideOverlay();
     g.mode = "play";
-    g.lookHintT = 6;
+    g.lookHintT = input.device === "keyboard" ? 6 : 0;
     pop(`DAY ${g.state.day}`, COLOR.yellow);
   }
 
@@ -335,30 +330,88 @@ export function createGame(canvas, uiRoot) {
       const placed = s.gym.placed.filter((_, k) => k !== i);
       g.state = { ...s, money: s.money + sellValue(eq.cost), gym: { ...s.gym, placed } };
       flash(b, `Sold ${eq.name} for $${sellValue(eq.cost)}`);
+      audio.play("cash");
       refreshGym();
       return;
     }
     const eq = EQUIPMENT[a.type];
     if (findAt(s.gym.placed, a.x, a.y) >= 0) return;
     const err = placementError(map, s.gym.placed, a.x, a.y, a.rot);
-    if (err) return flash(b, err);
+    if (err) return flash(b, err), audio.play("error");
     if (Math.floor(g.player.x) === a.x && Math.floor(g.player.y) === a.y) return flash(b, "You're standing there");
-    if (s.money < eq.cost) return flash(b, `Need $${eq.cost}`);
-    g.state = { ...s, money: s.money - eq.cost, gym: { ...s.gym, placed: [...s.gym.placed, { type: a.type, x: a.x, y: a.y, rot: a.rot }] } };
+    if (s.money < eq.cost) return flash(b, `Need $${eq.cost}`), audio.play("error");
+    g.state = { ...s, money: s.money - eq.cost, gym: { ...s.gym, placed: [...s.gym.placed, { type: a.type, x: a.x, y: a.y, rot: a.rot, wear: 0 }] } };
     flash(b, `${eq.name} installed! Appeal ${gymAppeal(g.state)}`);
+    audio.play("clank");
     refreshGym();
   }
 
   function openBuild() {
     releaseMouse();
     g.build.on = true;
+    g.build.sel = -1;
     g.mode = "build";
   }
 
   // ── Loop ───────────────────────────────────────────────────────────────
+  function syncModeOutputs() {
+    const busy = g.mode === "train";
+    const event = busy && g.trainer.kind !== "train";
+    const mode = g.mode === "menu" && overlayOpen() !== "title" ? "menu" : g.mode;
+    audio.setMusic(g.mode === "title" ? "title" : event ? "event" : "gym");
+    audio.setIntensity(event ? 1 : busy ? (g.trainer.phase === "set" ? 0.7 : 0.4) : g.mode === "menu" ? 0.1 : 0.25);
+    if (mode !== lastMode) {
+      lastMode = mode;
+      touch.setMode(mode);
+    }
+  }
+
+  // Unlocked mouse look: an optional dead zone (so a click to drag never nudges the view), then
+  // raw pointer deltas are eased in over ~40 ms so uneven mouse events feel smooth.
+  const dragState = { travel: 0, px: 0, py: 0, out: { x: 0, y: 0 } };
+  function dragLook(active, dt, deadZone) {
+    const d = dragState;
+    if (!active) {
+      d.travel = d.px = d.py = 0;
+      return null;
+    }
+    const mx = input.mouse.dx;
+    const my = input.mouse.dy;
+    d.travel += Math.abs(mx) + Math.abs(my);
+    if (d.travel < deadZone) return null;
+    if (!mx && !my && Math.abs(d.px) < 0.05 && Math.abs(d.py) < 0.05) return null;
+    d.px += mx;
+    d.py += my;
+    const k = 1 - Math.exp(-dt / 0.04);
+    d.out.x = d.px * k;
+    d.out.y = d.py * k;
+    d.px -= d.out.x;
+    d.py -= d.out.y;
+    return d.out;
+  }
+
+  /** -1..1 turn from the cursor resting in the outer 8% of the view; 0 in the middle. */
+  const EDGE = 0.08;
+  const EDGE_TURN = 2.2;
+  const edgeTurn = (fx) => (fx < EDGE ? -Math.min(1, (EDGE - fx) / EDGE) : fx > 1 - EDGE ? Math.min(1, (fx - 1 + EDGE) / EDGE) : 0);
+
+  let cursor = "";
+  const setCursor = (c) => {
+    if (c !== cursor) canvas.style.cursor = cursor = c;
+  };
+
   function update(dt, t) {
-    g.shake = Math.max(0, g.shake - dt * 40);
+    input.poll(dt);
+    if (g.mode !== "play") setCursor("");
+    g.shake = settings.calm ? 0 : Math.max(0, g.shake - dt * 40);
     updateCallouts(dt);
+    syncModeOutputs();
+    // Hit-stop: the world holds for a beat after a perfect set.
+    if (g.hitStop > 0) {
+      g.hitStop -= dt;
+      input.endFrame();
+      return;
+    }
     const locked = document.pointerLockElement === canvas;
     if (g.mode === "title") {
       // A slow sway around a pose that keeps the mural out from behind the logo.
@@ -367,15 +420,25 @@ export function createGame(canvas, uiRoot) {
       g.player.y = tc.y;
       g.player.angle = tc.a + Math.sin(t * 0.15) * 0.15;
     } else if (g.mode === "play") {
-      if (locked) g.lookHintT = 0;
+      // Without pointer lock (refused by embedded browsers, some Safari setups) the view follows the
+      // cursor, and resting it near a side edge keeps turning; "Hold to look" restores click-and-drag.
+      const mouseLook = !locked && input.device !== "touch";
+      const hover = mouseLook && !settings.dragLook && input.mouse.inside;
+      const dragging = mouseLook && input.mouse.down;
+      const drag = dragLook(hover || dragging, dt, hover ? 0 : 4);
+      const edge = hover ? edgeTurn(input.mouse.x / (g.view.w || 1)) : 0;
+      if (locked || input.device !== "keyboard" || drag || edge) g.lookHintT = 0;
       else if (g.lookHintT > 0) g.lookHintT -= dt;
-      updatePlayer(g.player, input, dt, locked, solid);
+      updatePlayer(g.player, input, dt, locked, solid, drag);
+      g.player.angle += edge * EDGE_TURN * dt;
+      setCursor(locked ? "" : edge < 0 ? "w-resize" : edge > 0 ? "e-resize" : settings.dragLook ? (dragging ? "grabbing" : "grab") : "crosshair");
       g.state.time += dt * MIN_PER_SEC;
       g.target = findTarget();
       if (g.target && (input.pressed("use") || input.pressed("alt"))) interact(g.target, input.pressed("alt"));
       else if (input.pressed("build")) openBuild();
       else if (input.pressed("careers")) openCareers();
       else if (input.pressed("stats")) openStats();
+      else if (input.pressed("gym")) openGym();
       else if (input.pressed("pause") && !locked) openPause();
       if (g.mode === "play" && g.state.time >= DAY_END) {
         pop("PASSED OUT!", "#a8b0bc");
@@ -398,19 +461,22 @@ export function createGame(canvas, uiRoot) {
           openMenu(() => showResults(id, res, g.state, { close: resume }));
         }
       }
-      g.shake = Math.max(g.shake, g.trainer.shake);
+      if (!settings.calm) g.shake = Math.max(g.shake, g.trainer.shake);
     } else if (g.mode === "build") {
       const a = updateBuild(g.build, input, g.view, map, g.state.gym.placed, dt);
       if (a) applyBuild(a);
     } else if (g.mode === "menu") {
       const k = overlayOpen();
-      if (input.pressed("pause") || (k === "careers" && input.pressed("careers")) || (k === "stats" && input.pressed("stats"))) {
-        if (k !== "title") resume();
+      const toggles = (k === "careers" && input.pressed("careers")) || (k === "stats" && input.pressed("stats")) || (k === "gym" && input.pressed("gym"));
+      if (k === "settings" && input.pressed("pause") && g.settingsBack) g.settingsBack();
+      else if ((input.pressed("pause") || toggles) && k !== "title" && k !== "settings") {
+        if (k === "summary" || k === "legend") next();
+        else resume();
       }
     }
     if (g.state && g.mode !== "menu" && g.mode !== "title") {
       const busy = g.mode === "train" && g.trainer.kind === "train" ? g.trainIndex : -1;
-      updateCrowd(g.crowd, dt, g.state.members, g.state.time, map, g.state.gym.placed, busy);
+      updateCrowd(g.crowd, dt, g.state.roster, g.state.time, map, g.state.gym.placed, busy);
     }
     if (g.state) updateBody(dt);
     // Your own reflection would loom behind the bar mid-set; it returns when you walk.
@@ -432,6 +498,7 @@ export function createGame(canvas, uiRoot) {
 
   function render(ctx, view, t) {
     g.view = view;
+    if (!view.w || !view.h) return;
     if (g.mode === "build") {
       drawBuild(ctx, view, g.build, g, map, g.crowd, g.player, t);
       drawCallouts(ctx);
@@ -449,8 +516,11 @@ export function createGame(canvas, uiRoot) {
       ctx.translate(sx, sy);
       rc.render(ctx, view, cam, g.scene.recs, g.scene.n, t, renderOpts);
       if (g.mode === "train") {
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
-        ctx.fillRect(-20, -20, view.w + 40, view.h + 40);
+        // Competitions dim the room around the stage; sets keep it lit (the arm shadow and vignette give depth).
+        if (g.trainer.kind !== "train") {
+          ctx.fillStyle = "rgba(0,0,0,0.18)";
+          ctx.fillRect(-20, -20, view.w + 40, view.h + 40);
+        }
         drawViewmodel(ctx, view, g.trainer, t, g.state.stats.mus.arms, g.body);
       }
       ctx.restore();
@@ -461,13 +531,22 @@ export function createGame(canvas, uiRoot) {
     drawCallouts(ctx);
   }
 
+  // Audio can only start from a user gesture.
+  const unlock = () => audio.unlock();
+  addEventListener("pointerdown", unlock);
+  addEventListener("keydown", unlock);
+
   // Pointer lock: click the view to look; losing the lock mid-walk pauses.
   canvas.addEventListener("click", () => {
-    if (g.mode === "play" && !document.pointerLockElement) canvas.requestPointerLock?.()?.catch?.(() => {});
+    if (g.mode === "play" && !document.pointerLockElement && input.device !== "touch") canvas.requestPointerLock?.()?.catch?.(() => {});
   });
   document.addEventListener("pointerlockchange", () => {
-    if (!document.pointerLockElement && g.mode === "play" && !suppressPause) openPause();
-    suppressPause = false;
+    const suppressed = menus.takeSuppress();
+    if (!document.pointerLockElement && g.mode === "play" && !suppressed) openPause();
+  });
+  // Leaving the tab mid-day is a safe point too.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && g.state && g.mode !== "title") store.write(g.state);
   });
 
   initOverlays(uiRoot);
@@ -477,9 +556,10 @@ export function createGame(canvas, uiRoot) {
 
   // Debug / test surface.
   Object.assign(g, {
-    update, render, save,
+    update, render, store, audio, input,
+    save: { load: () => store.load() && { state: store.load() }, write: (d) => store.write(d.state), clear: () => store.clear() },
     newGame: () => start(freshState()),
-    continueGame: () => { const d = save.load(); if (d) start(d.state); return !!d; },
+    continueGame: () => { const st = store.load(); if (st) start(st); return !!st; },
     teleport(x, y, angle = g.player.angle) { Object.assign(g.player, { x, y, angle }); },
     train(type, tier = 1) {
       startTrainer(g.trainer, "train", type);
@@ -489,7 +569,7 @@ export function createGame(canvas, uiRoot) {
     },
     rep: () => { input.mouse.clicked = true; },
     beginSet: () => { g.trainer.phase = "set"; g.trainer.reps = TIERS[g.trainer.tier].reps; },
-    openBuild, applyBuild, openCareers, openStats, openPause, enterEvent, sleep, toggleStyle, resume,
+    openBuild, applyBuild, openCareers, openStats, openPause, openGym, openShop, openSettings, enterEvent, sleep, toggleStyle, resume, next,
     setState(patch) { g.state = { ...g.state, ...patch }; refreshGym(); },
   });
   return g;

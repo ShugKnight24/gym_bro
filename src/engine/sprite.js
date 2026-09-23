@@ -11,6 +11,9 @@
  * without a per-pixel filter. Layers with `shade: false` or a `blend` mode are
  * emissive and stay bright.
  *
+ * A faded sprite (`alpha` < 1) is composited opaque into a scratch canvas and
+ * blitted once with the fade, so its layers never show through each other.
+ *
  * Vendored from Clockwork Carnage src/rendering/props.js (drawSvgSprite).
  */
 
@@ -98,6 +101,8 @@ function prepareSprite(key, sprite, defs) {
   sprite._ready = true;
   sprite._defs = defs + shadeFilter();
   const pre = sprite.realistic ? "sprite:r:" : "sprite:";
+  // Union of every layer box, padded for sway/float/bob: the fade composite's bounds.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   sprite.layers.forEach((layer, i) => {
     layer._id = `${pre}${key}:${i}`;
     layer._box = layer.box || sprite.box;
@@ -107,33 +112,19 @@ function prepareSprite(key, sprite, defs) {
       layer._silMarkup = `<g filter="url(#shadeSil)">${layer.silMarkup ?? layer.markup}</g>`;
       layer._silSlot = { scale: 0, img: null };
     }
+    const b = layer._box;
+    x0 = Math.min(x0, b[0]);
+    y0 = Math.min(y0, b[1]);
+    x1 = Math.max(x1, b[0] + b[2]);
+    y1 = Math.max(y1, b[1] + b[3]);
   });
+  const pad = Math.max(x1 - x0, y1 - y0) * 0.15;
+  sprite._ub = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
 }
 
-/**
- * Blit a layered SVG sprite with its origin at (x, y), `ppu` screen pixels per
- * art unit. `key` must be unique per distinct sprite (it keys the bitmap
- * cache). Returns false while the base layer is still decoding.
- *
- * @param {object} [o] { alpha = 1, shade = 0, flip = false, cap = MAX_BITMAP_PX }
- */
-export function drawSvgSprite(ctx, key, sprite, defs, x, y, ppu, t, o = {}) {
-  if (typeof Image === "undefined" || !sprite) return false;
-  const alpha = o.alpha ?? 1;
-  const shade = o.shade ?? 0;
-  const cap = o.cap ?? MAX_BITMAP_PX;
-  if (!sprite._ready) prepareSprite(key, sprite, defs);
-  const m = ctx.getTransform();
-  const devPpu = ppu * (Math.hypot(m.a, m.b) || 1);
+/** Draw every layer at the context's current transform; `alpha` scales each layer. */
+function drawLayers(ctx, sprite, devPpu, cap, t, alpha, shade) {
   const layers = sprite.layers;
-  const base = layers[sprite.base || 0];
-  if (!layerBitmap(base._slot, base._id, base._box, sprite._defs, base.markup, rasterScale(devPpu * (base.res || 1), base._box, cap))) {
-    return false;
-  }
-
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(o.flip ? -ppu : ppu, ppu);
   const prevAlpha = ctx.globalAlpha;
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i];
@@ -158,6 +149,97 @@ export function drawSvgSprite(ctx, key, sprite, defs, x, y, ppu, t, o = {}) {
     }
     ctx.restore();
   }
+}
+
+// Scratch canvas for faded sprites, grown on demand and reused.
+let fadeCanvas = null;
+let fadeCtx = null;
+
+/**
+ * Faded sprite: composite every layer at full opacity into the scratch canvas
+ * (device pixels, clipped to the target canvas), then blit that once with the
+ * fade, so overlapping layers never show through each other.
+ */
+function drawFaded(ctx, sprite, x, y, ppu, flip, devPpu, cap, t, alpha, shade) {
+  const m = ctx.getTransform();
+  const u = sprite._ub;
+  const sx = flip ? -ppu : ppu;
+  // Device-space bounds of the padded sprite box.
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (let c = 0; c < 4; c++) {
+    const ax = x + (c & 1 ? u[2] : u[0]) * sx;
+    const ay = y + (c & 2 ? u[3] : u[1]) * ppu;
+    const dx = m.a * ax + m.c * ay + m.e;
+    const dy = m.b * ax + m.d * ay + m.f;
+    if (dx < bx0) bx0 = dx;
+    if (dx > bx1) bx1 = dx;
+    if (dy < by0) by0 = dy;
+    if (dy > by1) by1 = dy;
+  }
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+  bx0 = Math.max(0, Math.floor(bx0));
+  by0 = Math.max(0, Math.floor(by0));
+  bx1 = Math.min(cw, Math.ceil(bx1));
+  by1 = Math.min(ch, Math.ceil(by1));
+  const bw = bx1 - bx0;
+  const bh = by1 - by0;
+  if (bw <= 0 || bh <= 0) return;
+  if (!fadeCanvas) {
+    fadeCanvas = document.createElement("canvas");
+    fadeCanvas.width = fadeCanvas.height = 1;
+    fadeCtx = fadeCanvas.getContext("2d");
+  }
+  if (fadeCanvas.width < bw || fadeCanvas.height < bh) {
+    fadeCanvas.width = Math.max(fadeCanvas.width, bw);
+    fadeCanvas.height = Math.max(fadeCanvas.height, bh);
+  }
+  const g = fadeCtx;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = 1;
+  g.globalCompositeOperation = "source-over";
+  g.clearRect(0, 0, bw, bh);
+  g.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+  g.imageSmoothingQuality = ctx.imageSmoothingQuality;
+  g.setTransform(m.a, m.b, m.c, m.d, m.e - bx0, m.f - by0);
+  g.translate(x, y);
+  g.scale(sx, ppu);
+  drawLayers(g, sprite, devPpu, cap, t, 1, shade);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha *= alpha;
+  ctx.drawImage(fadeCanvas, 0, 0, bw, bh, bx0, by0, bw, bh);
+  ctx.restore();
+}
+
+/**
+ * Blit a layered SVG sprite with its origin at (x, y), `ppu` screen pixels per
+ * art unit. `key` must be unique per distinct sprite (it keys the bitmap
+ * cache). Returns false while the base layer is still decoding.
+ *
+ * @param {object} [o] { alpha = 1, shade = 0, flip = false, cap = MAX_BITMAP_PX }
+ */
+export function drawSvgSprite(ctx, key, sprite, defs, x, y, ppu, t, o = {}) {
+  if (typeof Image === "undefined" || !sprite) return false;
+  const alpha = o.alpha ?? 1;
+  const shade = o.shade ?? 0;
+  const cap = o.cap ?? MAX_BITMAP_PX;
+  if (!sprite._ready) prepareSprite(key, sprite, defs);
+  const m = ctx.getTransform();
+  const devPpu = ppu * (Math.hypot(m.a, m.b) || 1);
+  const base = sprite.layers[sprite.base || 0];
+  if (!layerBitmap(base._slot, base._id, base._box, sprite._defs, base.markup, rasterScale(devPpu * (base.res || 1), base._box, cap))) {
+    return false;
+  }
+  if (alpha <= 0.004) return true;
+  if (alpha < 0.996) {
+    drawFaded(ctx, sprite, x, y, ppu, !!o.flip, devPpu, cap, t, alpha, shade);
+    return true;
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(o.flip ? -ppu : ppu, ppu);
+  drawLayers(ctx, sprite, devPpu, cap, t, 1, shade);
   ctx.restore();
   return true;
 }

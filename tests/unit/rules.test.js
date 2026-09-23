@@ -75,10 +75,11 @@ describe("day rollover", () => {
     g = { ...g, time: 20 * 60, stats: { ...g.stats, energy: 5, fat: { ...g.stats.fat, chest: 60 } } };
     const { state, summary } = endDay(g);
     expect(summary.dues).toBe(g.members * g.dues);
-    expect(state.money).toBe(g.money + summary.dues);
+    expect(summary.net).toBe(summary.dues + summary.sales.revenue - summary.costs.total);
+    expect(state.money).toBe(g.money + summary.net);
     expect(state.day).toBe(2);
     expect(state.time).toBe(DAY_START);
-    expect(state.stats.energy).toBe(100);
+    expect(state.stats.energy).toBe(summary.news?.id === "heatwave" ? 80 : 100);
     expect(state.stats.fat.chest).toBeLessThan(60);
     expect(summary.passedOut).toBe(false);
   });

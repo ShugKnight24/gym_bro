@@ -1,5 +1,5 @@
 /**
- * Grid raycaster: DDA walls textured per column from canvas textures, floor
+ * Grid raycaster: DDA walls textured per backing-pixel column, floor
  * and ceiling cast into a reduced-resolution ImageData and upscaled, baked
  * distance fog, a zBuffer, and layered SVG billboards clipped against it.
  *
@@ -30,7 +30,7 @@ const INK_RGBA = "rgba(4,6,11,0.92)";
 export function createRaycaster(opts = {}) {
   const cfg = {
     fov: 75, wallH: 1.5, cm: 200, fogNear: 2.5, fogFar: 16, fogMax: 0.82, fogColor: [18, 22, 30],
-    fogLevels: 16, floorRes: 0.5, maxSteps: 96, edgeWall: 1, flatSize: 64, spriteCap: 768, sideShade: 0.16, nearFade: 0.7,
+    fogLevels: 16, floorRes: 0.5, flatBilerp: 1.1, maxColScale: 2, maxSteps: 96, edgeWall: 1, flatSize: 128, spriteCap: 768, sideShade: 0.16, nearFade: 0.7,
     ...opts,
   };
   const FL = cfg.fogLevels;
@@ -108,33 +108,33 @@ export function createRaycaster(opts = {}) {
   }
 
   /**
-   * Flat (floor/ceiling) texture → mips[m][fogLevel] Uint32 texel arrays.
-   * Mips stay flatSize² but are blurred through a smaller copy, so distant
-   * rows stop shimmering without a per-texel filter.
+   * Flat (floor/ceiling) texture → mips[m][fogLevel] Uint32 texel arrays, a
+   * box-filtered chain halving from flatSize² down to 8² (each mip stored at
+   * its own size), so every row samples the mip whose texels match its
+   * on-screen footprint: near rows stay sharp, distant rows stop shimmering.
    */
   function bakeFlat(src) {
-    const n = cfg.flatSize;
     const c = document.createElement("canvas");
-    c.width = c.height = n;
     const g = c.getContext("2d", { willReadFrequently: true });
-    const small = document.createElement("canvas");
-    const sg = small.getContext("2d");
     const mips = [];
-    for (let m = 0; m < 3; m++) {
-      const k = n >> (m * 2);
-      small.width = small.height = k;
-      sg.imageSmoothingEnabled = true;
-      sg.imageSmoothingQuality = "high";
-      sg.drawImage(src, 0, 0, k, k);
+    let prev = src;
+    for (let k = cfg.flatSize; k >= 8; k >>= 1) {
+      const lvl = document.createElement("canvas");
+      lvl.width = lvl.height = k;
+      const lg = lvl.getContext("2d");
+      lg.imageSmoothingEnabled = true;
+      lg.imageSmoothingQuality = "high";
+      lg.drawImage(prev, 0, 0, k, k);
+      prev = lvl;
+      c.width = c.height = k;
       const levels = [];
       for (let l = 0; l < FL; l++) {
         g.globalCompositeOperation = "copy";
-        g.imageSmoothingEnabled = true;
-        g.drawImage(m ? small : src, 0, 0, n, n);
+        g.drawImage(lvl, 0, 0);
         g.globalCompositeOperation = "source-over";
         g.fillStyle = fogCss((l / (FL - 1)) * cfg.fogMax);
-        g.fillRect(0, 0, n, n);
-        levels.push(new Uint32Array(g.getImageData(0, 0, n, n).data.buffer.slice(0)));
+        g.fillRect(0, 0, k, k);
+        levels.push(new Uint32Array(g.getImageData(0, 0, k, k).data.buffer.slice(0)));
       }
       mips.push(levels);
     }
@@ -157,7 +157,7 @@ export function createRaycaster(opts = {}) {
     ensureFloorBuf(bw, bh);
     const buf = fcBuf;
     const n = cfg.flatSize;
-    const mask = n - 1;
+    const nMip = (floorTex[1] || floorTex[0] || ceilTex[1]).mips.length - 1;
     const { w: mw, h: mh, floor, ceil } = world;
     const nf = floorTex.length;
     const nc = ceilTex.length;
@@ -174,9 +174,16 @@ export function createRaycaster(opts = {}) {
       const isFloor = dy > 0;
       const dist = ((isFloor ? cam.z : cfg.wallH - cam.z) * focal) / (isFloor ? dy : -dy);
       const lv = fogLevel(dist);
-      // Texels per buffer pixel along the row picks the mip.
-      const foot = ((dist * 2 * tanH * n) / bw);
-      const mip = foot > 1.4 ? 2 : foot > 0.5 ? 1 : 0;
+      // Texels per buffer pixel picks the mip: the geometric mean of the
+      // footprint across the row and down the screen (grazing rows are
+      // stretched in depth), biased a little sharp since sampling is nearest.
+      const across = (dist * 2 * tanH * n) / bw;
+      const down = ((dist * ky) / (dy < 0 ? -dy : dy)) * n;
+      const foot = Math.sqrt(across * down);
+      let mip = foot > 1.1 ? Math.ceil(Math.log2(foot / 1.1)) : 0;
+      if (mip > nMip) mip = nMip;
+      const tn = n >> mip;
+      const tmask = tn - 1;
       const texs = isFloor ? floorTex : ceilTex;
       const lvArr = isFloor ? rowLv : rowLvC;
       const cnt = isFloor ? nf : nc;
@@ -188,11 +195,51 @@ export function createRaycaster(opts = {}) {
       const sy = (dist * 2 * planeY * kx) / W;
       let wx = cam.x + dist * (dirX - planeX) + sx * 0.5;
       let wy = cam.y + dist * (dirY - planeY) + sy * 0.5;
+      if (foot < cfg.flatBilerp) {
+        // Near rows (the band by the top and bottom edges, on mip 0) show a
+        // texel per buffer pixel or more: filter bilinearly so grid lines stay
+        // straight instead of stair-stepping through the upscale.
+        // Packed-channel lerps, R|B and A|G at once, weights out of 256.
+        let lcx = -1e9;
+        let lcy = -1e9;
+        let tex = def;
+        for (let xb = 0; xb < bw; xb++, i++, wx += sx, wy += sy) {
+          const cx = Math.floor(wx);
+          const cy = Math.floor(wy);
+          if (cx !== lcx || cy !== lcy) {
+            lcx = cx;
+            lcy = cy;
+            tex = cx >= 0 && cy >= 0 && cx < mw && cy < mh ? lvArr[map[cy * mw + cx]] || def : def;
+          }
+          const fu = (wx - cx) * tn - 0.5 + tn;
+          const fv = (wy - cy) * tn - 0.5 + tn;
+          const iu = fu | 0;
+          const iv = fv | 0;
+          const ax = ((fu - iu) * 256) | 0;
+          const ay = ((fv - iv) * 256) | 0;
+          const u0 = iu & tmask;
+          const u1 = (iu + 1) & tmask;
+          const r0 = (iv & tmask) * tn;
+          const r1 = ((iv + 1) & tmask) * tn;
+          const p00 = tex[r0 + u0];
+          const p01 = tex[r0 + u1];
+          const p10 = tex[r1 + u0];
+          const p11 = tex[r1 + u1];
+          const bx = 256 - ax;
+          const rbT = (((p00 & 0xff00ff) * bx + (p01 & 0xff00ff) * ax) >>> 8) & 0xff00ff;
+          const agT = (((p00 >>> 8) & 0xff00ff) * bx + ((p01 >>> 8) & 0xff00ff) * ax) >>> 8 & 0xff00ff;
+          const rbB = (((p10 & 0xff00ff) * bx + (p11 & 0xff00ff) * ax) >>> 8) & 0xff00ff;
+          const agB = (((p10 >>> 8) & 0xff00ff) * bx + ((p11 >>> 8) & 0xff00ff) * ax) >>> 8 & 0xff00ff;
+          const by = 256 - ay;
+          buf[i] = ((((rbT * by + rbB * ay) >>> 8) & 0xff00ff) | ((agT * by + agB * ay) & 0xff00ff00));
+        }
+        continue;
+      }
       for (let xb = 0; xb < bw; xb++, i++, wx += sx, wy += sy) {
         const cx = Math.floor(wx);
         const cy = Math.floor(wy);
         const tex = cx >= 0 && cy >= 0 && cx < mw && cy < mh ? lvArr[map[cy * mw + cx]] || def : def;
-        buf[i] = tex[(((wy - cy) * n) & mask) * n + (((wx - cx) * n) & mask)];
+        buf[i] = tex[(((wy - cy) * tn) & tmask) * tn + (((wx - cx) * tn) & tmask)];
       }
     }
     fcCtx.putImageData(fcImg, 0, 0);
@@ -200,7 +247,7 @@ export function createRaycaster(opts = {}) {
     ctx.drawImage(fc, 0, 0, bw, bh, 0, 0, W, H);
   }
 
-  function blitColumn(ctx, T, lv, side, u, x, top, bot, H) {
+  function blitColumn(ctx, T, lv, side, u, x, cw, top, bot, H) {
     const h = bot - top;
     if (h <= 0) return;
     let sy = 0;
@@ -215,7 +262,7 @@ export function createRaycaster(opts = {}) {
     sh -= sy;
     dh = (bot > H ? H : bot) - dy;
     if (sh <= 0 || dh <= 0) return;
-    ctx.drawImage(T.atlas, lv * T.w + u, side * T.h + sy, 1, sh, x, dy, 1, dh);
+    ctx.drawImage(T.atlas, lv * T.w + u, side * T.h + sy, 1, sh, x * cw, dy, cw, dh);
   }
 
   /**
@@ -226,8 +273,10 @@ export function createRaycaster(opts = {}) {
   function drawClipped(ctx, s, sx, sy, ppu, depth, t, H, W) {
     const box = s.sprite.box;
     const flip = !!s.flip;
-    let x0 = flip ? sx - (box[0] + box[2]) * ppu : sx + box[0] * ppu;
-    let x1 = flip ? sx - box[0] * ppu : sx + (box[0] + box[2]) * ppu;
+    const kc = frame.kc;
+    // Screen extent in columns (W is the column count).
+    let x0 = (flip ? sx - (box[0] + box[2]) * ppu : sx + box[0] * ppu) * kc;
+    let x1 = (flip ? sx - box[0] * ppu : sx + (box[0] + box[2]) * ppu) * kc;
     if (x1 < 0 || x0 >= W) return;
     x0 = x0 < 0 ? 0 : x0 | 0;
     x1 = x1 >= W ? W - 1 : x1 | 0;
@@ -257,7 +306,7 @@ export function createRaycaster(opts = {}) {
       else if (!v && run >= 0) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(run, 0, x - run, H);
+        ctx.rect(run / kc, 0, (x - run) / kc, H);
         ctx.clip();
         drawSvgSprite(ctx, s.key, s.sprite, s.defs, sx, sy, ppu, t, drawOpts);
         ctx.restore();
@@ -271,6 +320,8 @@ export function createRaycaster(opts = {}) {
   let runB = new Int32Array(256);
 
   function drawInk(ctx, W, H) {
+    const mw = world.w;
+    const cw = frame.cw;
     ctx.fillStyle = INK_RGBA;
     // Vertical: wall-face and depth discontinuities.
     for (let x = 1; x < W; x++) {
@@ -279,6 +330,13 @@ export function createRaycaster(opts = {}) {
       if (k === kp || k < 0 || kp < 0) continue;
       const z0 = zBuf[x - 1];
       const z1 = zBuf[x];
+      // Neighbouring cells of one flat wall are not an edge: no seam line
+      // every two metres, only at corners and depth steps.
+      if ((k & 1) === (kp & 1) && Math.abs(z1 - z0) < 0.05 * Math.min(z0, z1) + 0.02) {
+        const a = k >> 1;
+        const b = kp >> 1;
+        if ((k & 1) ? ((a / mw) | 0) === ((b / mw) | 0) : a % mw === b % mw) continue;
+      }
       const near = z1 < z0 ? x : x - 1;
       const nz = z1 < z0 ? z1 : z0;
       const lh = H / nz;
@@ -292,7 +350,7 @@ export function createRaycaster(opts = {}) {
         t = colTop[near];
         b = colBot[near];
       }
-      if (b > t) ctx.fillRect(near === x ? x : x - lw + 1, t, lw, b - t);
+      if (b > t) ctx.fillRect(near === x ? x * cw : (x + 1) * cw - lw, t, lw, b - t);
     }
     // Base and top lines: one straight segment per same-face run.
     let n = 0;
@@ -324,18 +382,18 @@ export function createRaycaster(opts = {}) {
         const lh = colBot[a] - colTop[a];
         const bucket = lh > 700 ? 2 : lh > 240 ? 1 : 0;
         if (bucket !== pass) continue;
-        ctx.moveTo(a, colBot[a]);
-        ctx.lineTo(b + 1, colBot[b]);
+        ctx.moveTo(a * cw, colBot[a]);
+        ctx.lineTo((b + 1) * cw, colBot[b]);
         if (colTop[a] > -2 || colTop[b] > -2) {
-          ctx.moveTo(a, colTop[a]);
-          ctx.lineTo(b + 1, colTop[b]);
+          ctx.moveTo(a * cw, colTop[a]);
+          ctx.lineTo((b + 1) * cw, colTop[b]);
         }
       }
       ctx.stroke();
     }
   }
 
-  const frame = { W: 0, H: 0, horizon: 0, focal: 1, dirX: 1, dirY: 0, t: 0 };
+  const frame = { W: 0, H: 0, cols: 0, kc: 1, cw: 1, horizon: 0, focal: 1, dirX: 1, dirY: 0, t: 0 };
   function drawSprites(ctx, sprites, m, mirrorPass, cam) {
     const { W, H, horizon, focal, dirX, dirY, t } = frame;
     for (let k = 0; k < m; k++) {
@@ -346,7 +404,7 @@ export function createRaycaster(opts = {}) {
       const sx = W / 2 + (focal * lat) / d;
       const sy = horizon + ((cam.z - (s.z || 0)) * focal) / d;
       const ppu = (focal / (d * cfg.cm)) * (s.scale || 1);
-      drawClipped(ctx, s, sx, sy, ppu, d, t + (s.phase || 0), H, W);
+      drawClipped(ctx, s, sx, sy, ppu, d, t + (s.phase || 0), H, frame.cols);
     }
   }
 
@@ -429,11 +487,21 @@ export function createRaycaster(opts = {}) {
       if (!world) return;
       const W = Math.ceil(view.w);
       const H = view.h;
-      ensureCols(W);
+      // One ray per backing pixel column (view.k backing px per CSS px, already
+      // held to the device tier's pixel budget by the loop), so walls are as
+      // sharp as the canvas on high-DPI screens; clamped to bound the CPU cost.
+      const kc = Math.min(Math.max(view.k || 1, 0.5), cfg.maxColScale);
+      const C = Math.max(1, Math.round(view.w * kc));
+      const cw = view.w / C;
+      ensureCols(C);
       const horizon = H / 2 + (cam.pitch || 0);
       const dirX = Math.cos(cam.angle);
       const dirY = Math.sin(cam.angle);
-      const tanH = Math.tan((cfg.fov * Math.PI) / 360);
+      // Hor+: `fov` is the horizontal FOV at 16:9. The vertical FOV stays
+      // fixed, so a wider window sees more to the sides instead of zooming in,
+      // and a narrower one keeps its wall height (clamped to 3:2 .. 21:9).
+      const aspect = Math.min(Math.max(W / H, 1.5), 2.4);
+      const tanH = Math.tan((cfg.fov * Math.PI) / 360) * (aspect / (16 / 9));
       const planeX = -dirY * tanH;
       const planeY = dirX * tanH;
       const focal = W / 2 / tanH;
@@ -445,10 +513,13 @@ export function createRaycaster(opts = {}) {
       const { w: mw, h: mh, walls } = world;
       const up = (cfg.wallH - cam.z) * focal;
       const dn = cam.z * focal;
-      ctx.imageSmoothingEnabled = false;
+      // Filtered columns: bricks, stripes and ink seams magnify smoothly
+      // instead of stair-stepping (the source rect is one texel wide, so
+      // there is no sideways bleed between atlas cells).
+      ctx.imageSmoothingEnabled = true;
       let anyMirror = false;
-      for (let x = 0; x < W; x++) {
-        const camX = (2 * (x + 0.5)) / W - 1;
+      for (let x = 0; x < C; x++) {
+        const camX = (2 * (x + 0.5)) / C - 1;
         let rx = dirX + planeX * camX;
         let ry = dirY + planeY * camX;
         let ox = cam.x;
@@ -520,7 +591,7 @@ export function createRaycaster(opts = {}) {
         if (((side === 0 && rx < 0) || (side === 1 && ry > 0)) !== bounced) u = 1 - u;
         const top = horizon - up / d;
         const bot = horizon + dn / d;
-        blitColumn(ctx, T, fogLevel(d), side, (u * T.w) | 0, x, top, bot, H);
+        blitColumn(ctx, T, fogLevel(d), side, (u * T.w) | 0, x, cw, top, bot, H);
         zFar[x] = d;
         if (!mir[x]) {
           zBuf[x] = d;
@@ -552,6 +623,9 @@ export function createRaycaster(opts = {}) {
       ctx.imageSmoothingEnabled = true;
       frame.W = W;
       frame.H = H;
+      frame.cols = C;
+      frame.kc = 1 / cw;
+      frame.cw = cw;
       frame.horizon = horizon;
       frame.focal = focal;
       frame.dirX = dirX;
@@ -559,14 +633,12 @@ export function createRaycaster(opts = {}) {
       frame.t = t;
       if (anyMirror) {
         drawSprites(ctx, sprites, m, true, cam);
-        ctx.imageSmoothingEnabled = false;
-        for (let x = 0; x < W; x++) {
+        for (let x = 0; x < C; x++) {
           if (!mir[x]) continue;
-          blitColumn(ctx, wallTex[mirTex[x]], mirLv[x], mirSide[x], mirU[x], x, mirTop[x], mirBot[x], H);
+          blitColumn(ctx, wallTex[mirTex[x]], mirLv[x], mirSide[x], mirU[x], x, cw, mirTop[x], mirBot[x], H);
         }
-        ctx.imageSmoothingEnabled = true;
       }
-      if (o && o.ink) drawInk(ctx, W, H);
+      if (o && o.ink) drawInk(ctx, C, H);
       drawSprites(ctx, sprites, m, false, cam);
     },
 

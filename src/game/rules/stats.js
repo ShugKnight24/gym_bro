@@ -23,6 +23,13 @@ export const TIERS = [
 
 export const MAX_ENERGY = 100;
 
+/**
+ * Progression pace. Gains per set are rate × quality × freshness ×
+ * diminishing(value, half); tuned so a committed player reaches the top
+ * meets and shows around days 50-60 rather than in the first two weeks.
+ */
+export const PACE = { strRate: 0.4, strHalf: 30, musRate: 1.1, musHalf: 45 };
+
 export function newStats() {
   return { str: 10, end: 10, bf: 22, energy: MAX_ENERGY, mus: byGroup(4), fat: byGroup(0) };
 }
@@ -66,14 +73,14 @@ export function trainSet(s, eq, quality, tier = 1, boost = 1) {
     const fr = freshness(s.fat[g]);
     wSum += w;
     wFresh += w * fr;
-    const d = w * q * fr * 2.2 * dim(s.mus[g], 60);
+    const d = w * q * fr * PACE.musRate * dim(s.mus[g], PACE.musHalf);
     mus[g] = r2(Math.min(100, s.mus[g] + d));
     gm[g] = r2(d);
     fat[g] = Math.min(100, Math.round(s.fat[g] + w * eq.fatigue * T.cost));
   }
   const fr = wSum ? wFresh / wSum : 1;
-  const str = eq.gains.str * q * fr * 1.2 * dim(s.str, 50);
-  const end = eq.gains.end * q * fr * 1.2 * dim(s.end, 50);
+  const str = eq.gains.str * q * fr * PACE.strRate * dim(s.str, PACE.strHalf);
+  const end = eq.gains.end * q * fr * PACE.strRate * dim(s.end, PACE.strHalf);
   const bf = eq.gains.end * q * 0.12 + 0.02 * q;
   const cost = setCost(eq, tier);
   return {
@@ -87,10 +94,10 @@ export function trainSet(s, eq, quality, tier = 1, boost = 1) {
   };
 }
 
-/** Overnight recovery. `sleep` 0-1 (passing out on the floor is ~0.6). */
-export function recover(s, sleep = 1) {
+/** Overnight recovery. `sleep` 0-1 (passing out on the floor is ~0.6), `bonus` extra fatigue shed (bed, fish oil). */
+export function recover(s, sleep = 1, bonus = 0) {
   const fat = {};
-  for (const g of GROUPS) fat[g] = Math.max(0, Math.round(s.fat[g] - 45 * sleep - 5));
+  for (const g of GROUPS) fat[g] = Math.max(0, Math.round(s.fat[g] - 45 * sleep - 5 - bonus));
   return { ...s, fat, energy: Math.round(clamp(40 + 60 * sleep, 0, MAX_ENERGY)), bf: r2(clamp(s.bf + 0.05, 6, 40)) };
 }
 

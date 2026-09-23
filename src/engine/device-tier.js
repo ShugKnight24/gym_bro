@@ -39,6 +39,9 @@ export function classifyDevice({ renderer = "", cores = 0, memoryGB = 0, touch =
   return weakCpu ? "low" : "mid";
 }
 
+/** Decoded-bitmap cache budget per tier (bytes); phones get far less memory than laptops. */
+export const BYTE_BUDGET = Object.freeze({ low: 64 * 1024 * 1024, mid: 128 * 1024 * 1024, high: 256 * 1024 * 1024 });
+
 let _tier = null;
 
 /** Read the device's signals once and classify. */

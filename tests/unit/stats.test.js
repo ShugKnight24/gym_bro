@@ -97,3 +97,32 @@ describe("physique", () => {
     expect(TIERS[2].gain).toBeGreaterThan(TIERS[0].gain);
   });
 });
+
+describe("progression pace", () => {
+  // A committed player: varied machines, working weight, good timing, rests nightly.
+  const ROT = ["bench_press", "squat_rack", "pullup_bar", "dumbbell_rack", "treadmill", "rowing_machine", "punching_bag"];
+  const daysTo = (pred, cap = 150) => {
+    let s = newStats();
+    for (let d = 1; d <= cap; d++) {
+      for (let n = 0; n < 12; n++) {
+        const eq = EQUIPMENT[ROT[(d * 3 + n) % ROT.length]];
+        if (s.energy - setCost(eq, 1) < 15) break;
+        s = trainSet(s, eq, 0.95, 1).stats;
+      }
+      s = recover(s, 1);
+      if (pred(s)) return d;
+    }
+    return Infinity;
+  };
+
+  it("opens the first meet within the first week or so", () => {
+    expect(daysTo((s) => s.str >= 18)).toBeLessThanOrEqual(10);
+    expect(daysTo((s) => physique(s) >= 12)).toBeLessThanOrEqual(14);
+  });
+
+  it("keeps the national and pro tiers a long-term goal", () => {
+    expect(daysTo((s) => s.str >= 50)).toBeGreaterThanOrEqual(30);
+    expect(daysTo((s) => physique(s) >= 55)).toBeGreaterThanOrEqual(40);
+    expect(daysTo((s) => physique(s) >= 55)).toBeLessThan(120);
+  });
+});
