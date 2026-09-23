@@ -87,10 +87,10 @@ export function trainSet(s, eq, quality, tier = 1, boost = 1) {
   };
 }
 
-/** Overnight recovery. `sleep` 0-1 (passing out on the floor is ~0.6). */
-export function recover(s, sleep = 1) {
+/** Overnight recovery. `sleep` 0-1 (passing out on the floor is ~0.6), `bonus` extra fatigue shed (bed, fish oil). */
+export function recover(s, sleep = 1, bonus = 0) {
   const fat = {};
-  for (const g of GROUPS) fat[g] = Math.max(0, Math.round(s.fat[g] - 45 * sleep - 5));
+  for (const g of GROUPS) fat[g] = Math.max(0, Math.round(s.fat[g] - 45 * sleep - 5 - bonus));
   return { ...s, fat, energy: Math.round(clamp(40 + 60 * sleep, 0, MAX_ENERGY)), bf: r2(clamp(s.bf + 0.05, 6, 40)) };
 }
 
