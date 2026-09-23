@@ -332,7 +332,8 @@ export function showSettings(st, bindings, h, capturing = "") {
       <h3>Look</h3>
       <label class="set"><span>Sensitivity</span><input type="range" min="25" max="300" value="${Math.round(st.sens * 100)}" data-input="sens"><small>${st.sens.toFixed(2)}x</small></label>
       ${toggle("invertY", "Invert Y", "Push up to look down")}
-      <p class="hint">No mouse lock? Hold the left button and drag to look. Arrow keys turn too.</p>
+      ${toggle("dragLook", "Hold to look", "Off: the view follows the mouse. On: hold the button and drag")}
+      <p class="hint">Click the view to lock the mouse where your browser allows it. Otherwise the view follows the cursor, and resting it near the left or right edge keeps turning. Arrow keys turn too.</p>
       <h3>Accessibility</h3>
       ${toggle("assist", "Easier timing", "Slower rep cursor, wider sweet spot")}
       ${toggle("calm", "Reduce motion", "No screen shake or hit-stop")}

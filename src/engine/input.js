@@ -57,7 +57,8 @@ export function createInput(target, bindings) {
   const padHeld = new Set();
   const touchHeld = new Set();
   const edge = new Set();
-  const mouse = { x: 0, y: 0, dx: 0, dy: 0, down: false, clicked: false, rightClicked: false, wheel: 0 };
+  // inside: the pointer is over the target (for edge-turning without pointer lock).
+  const mouse = { x: 0, y: 0, dx: 0, dy: 0, down: false, clicked: false, rightClicked: false, wheel: 0, inside: false };
   const stick = { x: 0, y: 0 };
   const touchMove = { x: 0, y: 0 };
   const look = { x: 0, y: 0 };
@@ -190,7 +191,10 @@ export function createInput(target, bindings) {
     mouse.x = e.clientX - r.left;
     mouse.y = e.clientY - r.top;
   };
+  target.addEventListener("pointerenter", () => (mouse.inside = true));
+  target.addEventListener("pointerleave", () => (mouse.inside = false));
   target.addEventListener("pointermove", (e) => {
+    mouse.inside = true;
     toLocal(e);
     mouse.dx += e.movementX || 0;
     mouse.dy += e.movementY || 0;

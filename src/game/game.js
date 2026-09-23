@@ -349,6 +349,7 @@ export function createGame(canvas, uiRoot) {
   function openBuild() {
     releaseMouse();
     g.build.on = true;
+    g.build.sel = -1;
     g.mode = "build";
   }
 
@@ -365,19 +366,20 @@ export function createGame(canvas, uiRoot) {
     }
   }
 
-  // Drag-to-look: a small dead zone so a click never nudges the view, then the
+  // Unlocked mouse look: an optional dead zone (so a click to drag never nudges the view), then
   // raw pointer deltas are eased in over ~40 ms so uneven mouse events feel smooth.
   const dragState = { travel: 0, px: 0, py: 0, out: { x: 0, y: 0 } };
-  function dragLook(dragging, dt) {
+  function dragLook(active, dt, deadZone) {
     const d = dragState;
-    if (!dragging) {
+    if (!active) {
       d.travel = d.px = d.py = 0;
       return null;
     }
     const mx = input.mouse.dx;
     const my = input.mouse.dy;
     d.travel += Math.abs(mx) + Math.abs(my);
-    if (d.travel < 4) return null;
+    if (d.travel < deadZone) return null;
+    if (!mx && !my && Math.abs(d.px) < 0.05 && Math.abs(d.py) < 0.05) return null;
     d.px += mx;
     d.py += my;
     const k = 1 - Math.exp(-dt / 0.04);
@@ -387,6 +389,11 @@ export function createGame(canvas, uiRoot) {
     d.py -= d.out.y;
     return d.out;
   }
+
+  /** -1..1 turn from the cursor resting in the outer 8% of the view; 0 in the middle. */
+  const EDGE = 0.08;
+  const EDGE_TURN = 2.2;
+  const edgeTurn = (fx) => (fx < EDGE ? -Math.min(1, (EDGE - fx) / EDGE) : fx > 1 - EDGE ? Math.min(1, (fx - 1 + EDGE) / EDGE) : 0);
 
   let cursor = "";
   const setCursor = (c) => {
@@ -413,13 +420,18 @@ export function createGame(canvas, uiRoot) {
       g.player.y = tc.y;
       g.player.angle = tc.a + Math.sin(t * 0.15) * 0.15;
     } else if (g.mode === "play") {
-      // Without pointer lock (denied, embedded browser, Safari quirks) the mouse still looks while the button is held.
-      const dragging = !locked && input.mouse.down && input.device !== "touch";
-      const drag = dragLook(dragging, dt);
-      if (locked || input.device !== "keyboard" || drag) g.lookHintT = 0;
+      // Without pointer lock (refused by embedded browsers, some Safari setups) the view follows the
+      // cursor, and resting it near a side edge keeps turning; "Hold to look" restores click-and-drag.
+      const mouseLook = !locked && input.device !== "touch";
+      const hover = mouseLook && !settings.dragLook && input.mouse.inside;
+      const dragging = mouseLook && input.mouse.down;
+      const drag = dragLook(hover || dragging, dt, hover ? 0 : 4);
+      const edge = hover ? edgeTurn(input.mouse.x / (g.view.w || 1)) : 0;
+      if (locked || input.device !== "keyboard" || drag || edge) g.lookHintT = 0;
       else if (g.lookHintT > 0) g.lookHintT -= dt;
       updatePlayer(g.player, input, dt, locked, solid, drag);
-      setCursor(locked ? "" : dragging ? "grabbing" : "grab");
+      g.player.angle += edge * EDGE_TURN * dt;
+      setCursor(locked ? "" : edge < 0 ? "w-resize" : edge > 0 ? "e-resize" : settings.dragLook ? (dragging ? "grabbing" : "grab") : "crosshair");
       g.state.time += dt * MIN_PER_SEC;
       g.target = findTarget();
       if (g.target && (input.pressed("use") || input.pressed("alt"))) interact(g.target, input.pressed("alt"));
