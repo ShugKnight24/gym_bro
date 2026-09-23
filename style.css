@@ -104,3 +104,26 @@ button[disabled] { opacity: .55; cursor: default; font-size: 12px; }
   .split { grid-template-columns: 1fr; }
   .stats { grid-template-columns: 1fr; }
 }
+
+/* ── Touch controls (engine/touch-controls.js) ─────────────────────────── */
+.tc { position: fixed; inset: 0; z-index: 5; pointer-events: none; user-select: none; -webkit-user-select: none; touch-action: none; }
+.tc[hidden], .tc [hidden] { display: none !important; }
+.tc-zone { position: absolute; top: 0; bottom: 0; pointer-events: auto; touch-action: none; }
+.tc-stick-zone { left: 0; width: 40%; }
+.tc-look-zone { left: 40%; right: 0; }
+.tc-base { position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 3px solid rgba(255,255,255,.5);
+  background: rgba(4,6,11,.25); display: none; }
+.tc-base.on { display: block; }
+.tc-knob { position: absolute; left: 50%; top: 50%; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; background: rgba(255,255,255,.75); }
+.tc-buttons { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex; flex-wrap: wrap-reverse; flex-direction: row-reverse; justify-content: flex-start; align-items: flex-end; gap: 10px; max-width: 250px; }
+.tc-top { position: absolute; left: 50%; transform: translateX(-50%); top: max(8px, env(safe-area-inset-top)); display: flex; gap: 10px; }
+.tc-btn { pointer-events: auto; touch-action: none; min-width: 64px; height: 48px; padding: 0 12px; font: 900 13px var(--ui); letter-spacing: .04em;
+  color: var(--ink); background: rgba(255,255,255,.85); border: 3px solid var(--ink); border-radius: 12px; box-shadow: 3px 3px 0 var(--ink); }
+.tc-btn.on { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); background: var(--yellow); }
+.tc-big { width: 84px; height: 84px; border-radius: 50%; font-size: 16px; background: var(--yellow); }
+.tc-huge { width: 140px; height: 140px; border-radius: 50%; font-size: 26px; background: var(--yellow); }
+.tc[data-mode="train"] .tc-buttons { max-width: none; }
+:root[data-art-style="modern"] .tc-btn { color: #fff; background: rgba(21,21,23,.7); border: 1px solid rgba(255,255,255,.25); box-shadow: none; }
+:root[data-art-style="modern"] .tc-btn.on, :root[data-art-style="modern"] .tc-big, :root[data-art-style="modern"] .tc-huge { background: rgba(255,255,255,.2); }
+/* ── end touch controls ────────────────────────────────────────────────── */
