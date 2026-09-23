@@ -20,7 +20,27 @@ const fmtMembers = memo((v) => `${v}`);
 const fmtRep = memo((v) => `${v}`);
 const fmtSat = memo((v) => `${v}%`);
 
+/** HUD layout is authored for 1280x720; smaller views scale it down. */
+export const hudScale = (view) => Math.max(0.6, Math.min(1, view.w / 1280, view.h / 720));
+
 export function drawHud(ctx, view, g, target, locked) {
+  // Crosshair dot, in unscaled view space so it stays exactly centred.
+  const vcx = Math.round(view.w / 2);
+  const vcy = Math.round(view.h / 2);
+  ctx.fillStyle = INK;
+  ctx.fillRect(vcx - 3, vcy - 3, 6, 6);
+  ctx.fillStyle = target ? COLOR.yellow : "#ffffff";
+  ctx.fillRect(vcx - 1.5, vcy - 1.5, 3, 3);
+
+  const k = hudScale(view);
+  ctx.save();
+  if (k !== 1) ctx.scale(k, k);
+  drawPlates(ctx, view.w / k, view.h / k, g, target, locked);
+  ctx.restore();
+}
+
+/** Everything but the crosshair, laid out in a vw×vh space scaled by hudScale. */
+function drawPlates(ctx, vw, vh, g, target, locked) {
   const s = g.state;
   const st = s.stats;
   const modern = isModernArt();
@@ -49,7 +69,7 @@ export function drawHud(ctx, view, g, target, locked) {
   text(ctx, fmtPhys(physique(st)), 266, 173, 16, modern ? "#e3c682" : COLOR.red, "right");
 
   // Gym roster.
-  const rx = view.w - 196;
+  const rx = vw - 196;
   plate(ctx, rx, 14, 180, 82, "cream");
   text(ctx, "MEMBERS", rx + 14, 32, 13, light);
   text(ctx, fmtMembers(s.members), rx + 166, 32, 20, light, "right");
@@ -58,13 +78,8 @@ export function drawHud(ctx, view, g, target, locked) {
   text(ctx, "SATISFACTION", rx + 14, 80, 13, light);
   text(ctx, fmtSat(s.sat), rx + 166, 80, 18, s.sat < 45 ? COLOR.red : light, "right");
 
-  // Crosshair dot.
-  const cx = Math.round(view.w / 2);
-  const cy = Math.round(view.h / 2);
-  ctx.fillStyle = INK;
-  ctx.fillRect(cx - 3, cy - 3, 6, 6);
-  ctx.fillStyle = target ? COLOR.yellow : "#ffffff";
-  ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+  const cx = Math.round(vw / 2);
+  const cy = Math.round(vh / 2);
 
   // Interaction prompt.
   if (target) {
@@ -91,8 +106,10 @@ export function drawHud(ctx, view, g, target, locked) {
 
   if (!locked && g.lookHintT > 0) {
     ctx.globalAlpha = Math.min(1, g.lookHintT);
-    plate(ctx, cx - 150, view.h * 0.3, 300, 34, "dark");
-    text(ctx, "CLICK THE VIEW TO LOOK AROUND", cx, view.h * 0.3 + 17, 15, "#ffffff", "center", true);
+    ctx.font = font(15, !modern);
+    const hw = Math.ceil(ctx.measureText(LOOK_HINT).width) + 40;
+    plate(ctx, cx - hw / 2, vh * 0.3, hw, 34, "dark");
+    text(ctx, LOOK_HINT, cx, vh * 0.3 + 17, 15, "#ffffff", "center", true);
     ctx.globalAlpha = 1;
   }
 
@@ -107,7 +124,7 @@ export function drawHud(ctx, view, g, target, locked) {
   // Key hints (touch has its own buttons).
   if (g.keyLabel("use") === "USE") return;
   let x = 18;
-  const y = view.h - 22;
+  const y = vh - 22;
   for (const [action, label, w] of HINTS) {
     x += keycap(ctx, g.keyLabel(action), x, y, 11) + 6;
     text(ctx, label, x, y, 13, "#ffffff", "left", true);
@@ -115,4 +132,5 @@ export function drawHud(ctx, view, g, target, locked) {
   }
 }
 
+const LOOK_HINT = "DRAG TO LOOK \u00b7 CLICK TO LOCK THE MOUSE \u00b7 \u2190 \u2192 TURN";
 const HINTS = [["build", "build", 50], ["careers", "careers", 64], ["gym", "gym office", 84], ["stats", "physique", 72], ["pause", "menu", 0]];

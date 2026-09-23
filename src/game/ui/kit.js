@@ -29,9 +29,12 @@ export function font(px, comic = true, weight = 700) {
 
 const sprites = new Map(); // key → sub → numeric size/dpr/style → canvas
 let count = 0;
+// Device px per CSS px under the current transform (dpr times any HUD scale),
+// rounded up to a quarter so sprites are never painted below the resolution
+// they are blitted at.
 const pixelRatio = (ctx) => {
   const m = ctx.getTransform();
-  return Math.max(1, Math.round(Math.hypot(m.a, m.b) * 4) / 4);
+  return Math.max(1, Math.ceil(Math.hypot(m.a, m.b) * 4 - 0.01) / 4);
 };
 
 /**

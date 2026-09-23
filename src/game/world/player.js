@@ -13,7 +13,8 @@ const LOOK_YAW = 2.6; // rad/s at full right-stick deflection
 const LOOK_PITCH = 260; // pitch units/s at full deflection
 
 export function createPlayer(x, y, angle) {
-  return { x, y, angle, pitch: 0, z: 0.8, bob: 0, bobAmp: 0, moving: false };
+  // sens scales mouse/touch look; invertY flips vertical look (both from settings).
+  return { x, y, angle, pitch: 0, z: 0.8, bob: 0, bobAmp: 0, moving: false, sens: 1, invertY: false };
 }
 
 /** Is any corner of the player's box inside a solid cell? */
@@ -29,7 +30,7 @@ function blocked(solid, x, y) {
 /**
  * @param {object} p       player
  * @param {object} input   engine/input.js
- * @param {boolean} look   pointer is locked: apply mouse look
+ * @param {boolean} look   apply mouse look (pointer locked, or dragging with the button held)
  * @param {(cx:number, cy:number) => boolean} solid
  */
 export function updatePlayer(p, input, dt, look, solid) {
@@ -37,11 +38,13 @@ export function updatePlayer(p, input, dt, look, solid) {
   let lx = look ? input.mouse.dx : 0;
   let ly = look ? input.mouse.dy : 0;
   if (input.lookDelta) (lx += input.lookDelta.x), (ly += input.lookDelta.y);
-  p.angle += lx * SENS;
-  let pitch = p.pitch - ly * 0.5;
+  const k = p.sens ?? 1;
+  const iy = p.invertY ? -1 : 1;
+  p.angle += lx * SENS * k;
+  let pitch = p.pitch - ly * 0.5 * k * iy;
   if (input.look) {
     p.angle += input.look.x * LOOK_YAW * dt;
-    pitch -= input.look.y * LOOK_PITCH * dt;
+    pitch -= input.look.y * LOOK_PITCH * dt * iy;
   }
   p.pitch = Math.max(-140, Math.min(140, pitch));
   const m = input.move || { x: input.axis("left", "right"), y: input.axis("back", "forward") };

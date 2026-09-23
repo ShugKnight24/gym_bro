@@ -14,33 +14,29 @@ import { createAudio } from "../engine/audio.js";
 import { createRaycaster } from "../engine/raycaster.js";
 import { setShadeColor, warmSvgSprites } from "../engine/sprite.js";
 import { isModernArt, setArtStyle, onArtStyleChange, ART_COMIC, ART_MODERN } from "../engine/art-style.js";
-import { buildMap, PROPS, SPAWN, WALL } from "./world/map.js";
+import { buildMap, SPAWN } from "./world/map.js";
 import { buildTextures } from "./world/textures.js";
 import { createPlayer, updatePlayer, cameraOf } from "./world/player.js";
 import { createCrowd, updateCrowd, resetCrowd } from "./world/members.js";
 import { createScene, rebuildScene, updateScene, playerSprite, worldSet, memberSprite } from "./world/scene.js";
-import { EQUIPMENT, SHOP } from "./data/equipment.js";
+import { EQUIPMENT } from "./data/equipment.js";
 import { EVENTS } from "./data/events.js";
 import { MEMBER_LOOKS } from "./art/figures.js";
 import { newGame as freshState, endDay, SET_MINUTES, DAY_END, gymAppeal, STARTER_GYM } from "./rules/day.js";
-import { trainSet, consume, setCost, TIERS } from "./rules/stats.js";
+import { trainSet, TIERS } from "./rules/stats.js";
 import { placementError, findAt, sellValue } from "./rules/build.js";
-import { eligibility, eventScore, awardScore, resolveEvent, applyEvent, careerRank } from "./rules/compete.js";
-import { isBroken, DUES_MIN, DUES_MAX } from "./rules/members.js";
-import { repair, repairCost, buyUpgrade, upgradeStatus } from "./rules/economy.js";
-import { launch, launchStatus, setAds, hasProduct } from "./rules/supplements.js";
+import { eligibility, eventScore, awardScore, resolveEvent, applyEvent } from "./rules/compete.js";
 import { rngFor, SALT } from "./rules/rng.js";
 import { createPersistence } from "./persist.js";
+import { createInteraction } from "./interact.js";
+import { createMenus } from "./menus.js";
 import { createTrainer, startTrainer, updateTrainer, drawViewmodel, drawTrainerHud, trainerCamDz } from "./train.js";
 import { PERFECT, GOOD } from "./rules/timing.js";
 import { drawHud } from "./ui/hud.js";
 import { createBuild, updateBuild, drawBuild, flash } from "./ui/build.js";
 import { callout, updateCallouts, drawCallouts, clearCallouts } from "./ui/callouts.js";
 import { cached, blit, COLOR } from "./ui/kit.js";
-import {
-  initOverlays, showTitle, showPause, showCareers, showStats, showSummary, showResults, showGym, showShop,
-  showSettings, showLegend, hideOverlay, overlayOpen,
-} from "./ui/overlays.js";
+import { initOverlays, showTitle, showSummary, showResults, showLegend, hideOverlay, overlayOpen } from "./ui/overlays.js";
 
 const BINDINGS = {
   forward: ["KeyW", "ArrowUp"], back: ["KeyS", "ArrowDown"], left: ["KeyA"], right: ["KeyD"],
@@ -75,7 +71,6 @@ export function createGame(canvas, uiRoot) {
   let occ = new Int16Array(map.w * map.h); // placed index + 1 per cell
   const cam = { x: 0, y: 0, angle: 0, z: 0.8, pitch: 0 };
   const renderOpts = { ink: true };
-  let suppressPause = false;
   let fogCss = "#000";
   let lastMode = "";
 
@@ -102,6 +97,7 @@ export function createGame(canvas, uiRoot) {
     settings,
     rc,
     get map() { return map; },
+    get occ() { return occ; },
     keyLabel(action) {
       if (input.device === "gamepad") return PAD_KEYS[action] || "?";
       if (input.device === "touch") return TOUCH_KEYS[action] || "?";
@@ -113,8 +109,18 @@ export function createGame(canvas, uiRoot) {
   const applySettings = () => {
     g.trainer.assist = settings.assist;
     g.trainer.calm = settings.calm;
+    g.player.sens = settings.sens;
+    g.player.invertY = settings.invertY;
   };
   applySettings();
+
+  const interaction = createInteraction(g, { audio, pop, sleep, openShop: () => menus.openShop() });
+  const menus = createMenus(g, {
+    audio, store, input, settings, uiRoot, defaultBindings: BINDINGS, applySettings, refreshGym, pop, persist,
+    toTitle, toggleStyle, enterEvent, prices: interaction.prices, buy: interaction.buy, invalidateTarget: interaction.invalidate,
+  });
+  const { findTarget, interact } = interaction;
+  const { releaseMouse, openMenu, resume, next, openPause, openCareers, openStats, openShop, openGym, openSettings } = menus;
 
   // Rep feedback: sound per judged rep, and a hit-stop on a perfect set's last rep.
   g.trainer.onRep = (h, combo) => {
@@ -153,7 +159,7 @@ export function createGame(canvas, uiRoot) {
     occ.fill(0);
     const placed = g.state ? g.state.gym.placed : STARTER_GYM;
     for (let i = 0; i < placed.length; i++) occ[placed[i].y * map.w + placed[i].x] = i + 1;
-    lastEquip = -1;
+    interaction.invalidate();
     rebuildScene(g.scene, placed, isModernArt());
   }
 
@@ -181,131 +187,8 @@ export function createGame(canvas, uiRoot) {
     }
   }
 
-  // ── Interaction targets ────────────────────────────────────────────────
-  const T_EQUIP = { kind: "equip", index: -1, label: "", alt: "", note: "" };
-  const T_DOOR = { kind: "door", label: "Sleep: end the day", alt: "", note: "Collect dues, pay the bills, recover, autosave" };
-  const T_DESK = { kind: "desk", label: "Clean the gym (10 energy)", alt: "", note: "" };
-  const T_VEND = { kind: "vending", label: "Shop", alt: "", note: "" };
-  let lastEquip = -1;
-  let lastEquipKey = "";
-  let lastClean = -1;
-
-  /** Vending prices after supplement-line perks. */
-  const prices = () => {
-    const out = {};
-    for (const id in SHOP) out[id] = id === "shake" && hasProduct(g.state, "whey") ? Math.ceil(SHOP[id].price / 2) : SHOP[id].price;
-    return out;
-  };
-
-  function findTarget() {
-    const p = g.player;
-    const dx = Math.cos(p.angle);
-    const dy = Math.sin(p.angle);
-    for (let d = 0.3; d <= 1.9; d += 0.1) {
-      const cx = Math.floor(p.x + dx * d);
-      const cy = Math.floor(p.y + dy * d);
-      const i = cy * map.w + cx;
-      const wall = map.walls[i];
-      if (wall) return wall === WALL.DOOR && d < 1.5 ? T_DOOR : null;
-      if (occ[i]) {
-        const idx = occ[i] - 1;
-        const pl = g.state.gym.placed[idx];
-        const eq = EQUIPMENT[pl.type];
-        const low = g.state.stats.energy < setCost(eq, 0);
-        const wear = Math.round(pl.wear || 0);
-        const key = `${low}|${wear}|${g.state.money >= repairCost(eq, wear)}`;
-        if (idx !== lastEquip || key !== lastEquipKey) {
-          lastEquip = idx;
-          lastEquipKey = key;
-          const broken = isBroken(pl);
-          T_EQUIP.label = broken ? `${eq.name}: BROKEN` : `Train: ${eq.name}`;
-          T_EQUIP.alt = wear >= 1 ? `Repair $${repairCost(eq, wear)}` : "";
-          T_EQUIP.note = broken ? "Members won't touch it until it's fixed." : low ? "Too tired! Eat, drink or sleep."
-            : `${setCost(eq, 1)} energy per working set · wear ${wear}%`;
-        }
-        T_EQUIP.index = idx;
-        return T_EQUIP;
-      }
-      if (map.blocked[i]) {
-        for (const pr of PROPS) {
-          if (!pr.act || Math.floor(pr.x) !== cx || Math.floor(pr.y) !== cy) continue;
-          if (pr.act === "vending") {
-            T_VEND.alt = `${SHOP.shake.name} $${prices().shake}`;
-            return T_VEND;
-          }
-          if (lastClean !== g.state.gym.clean) {
-            lastClean = g.state.gym.clean;
-            T_DESK.note = `Cleanliness ${g.state.gym.clean}% · members like a clean gym`;
-          }
-          return T_DESK;
-        }
-        return null;
-      }
-    }
-    return null;
-  }
-
   function pop(msg, color = COLOR.yellow, burst = true) {
     callout(msg, g.view.w / 2, g.view.h * 0.4, { burst, color, size: 30 });
-  }
-
-  function buy(id) {
-    const s = g.state;
-    const item = SHOP[id];
-    const price = prices()[id];
-    if (s.money < price) {
-      audio.play("error");
-      return pop("BROKE!", "#a8b0bc");
-    }
-    let it = item;
-    if (id === "preworkout" && hasProduct(s, "pump")) it = { ...it, energy: it.energy + 10 };
-    if (id === "snack" && hasProduct(s, "crunch")) it = { ...it, bf: 0 };
-    g.state = {
-      ...s, money: s.money - price, stats: consume(s.stats, it),
-      today: { ...s.today, spent: s.today.spent + price, boost: Math.max(s.today.boost, it.boost) },
-    };
-    audio.play("buy");
-    pop(`+${it.energy} ENERGY`, COLOR.green);
-  }
-
-  function interact(t, alt) {
-    const s = g.state;
-    if (t.kind === "equip") {
-      const pl = s.gym.placed[t.index];
-      const eq = EQUIPMENT[pl.type];
-      if (alt) {
-        if (!(pl.wear >= 1)) return;
-        if (s.money < repairCost(eq, pl.wear)) {
-          audio.play("error");
-          return pop("BROKE!", "#a8b0bc");
-        }
-        g.state = repair(s, t.index, EQUIPMENT);
-        audio.play("clank");
-        pop("GOOD AS NEW!", COLOR.cyan);
-        lastEquip = -1;
-        return;
-      }
-      if (isBroken(pl)) {
-        audio.play("error");
-        return pop("BROKEN! PRESS " + g.keyLabel("alt"), "#a8b0bc");
-      }
-      if (s.stats.energy < setCost(eq, 0)) {
-        audio.play("error");
-        return pop("TOO TIRED!", "#a8b0bc");
-      }
-      startTrainer(g.trainer, "train", pl.type);
-      g.trainIndex = t.index;
-      g.mode = "train";
-    } else if (t.kind === "door" && !alt) {
-      sleep(false);
-    } else if (t.kind === "desk" && !alt) {
-      if (s.stats.energy < 10) return pop("TOO TIRED!", "#a8b0bc");
-      g.state = { ...s, time: s.time + 30, stats: { ...s.stats, energy: s.stats.energy - 10 }, gym: { ...s.gym, clean: 100 } };
-      pop("SPARKLING!", COLOR.cyan);
-    } else if (t.kind === "vending") {
-      if (alt) buy("shake");
-      else openShop();
-    }
   }
 
   // ── Day, training and events ───────────────────────────────────────────
@@ -322,6 +205,7 @@ export function createGame(canvas, uiRoot) {
     g.state = tops.length ? { ...state, career: { ...state.career, legends: [...state.career.legends, ...tops.map((u) => u.id)] } } : state;
     persist(g.state);
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
     audio.play("sleep");
@@ -329,16 +213,6 @@ export function createGame(canvas, uiRoot) {
     if (summary.ups.length) audio.play("fanfare");
     g.queue = tops.map((u) => () => openMenu(() => showLegend(u, g.state, { close: next })));
     openMenu(() => showSummary(summary, g.state, { close: next }));
-  }
-
-  /** Close a menu, or open the next queued screen. */
-  function next() {
-    const q = g.queue.shift();
-    if (q) {
-      audio.play("fanfare");
-      audio.play("cheer");
-      q();
-    } else resume();
   }
 
   function finishSet(q) {
@@ -402,135 +276,6 @@ export function createGame(canvas, uiRoot) {
     pop(e.kind === "show" ? "SHOWTIME!" : "LIFT OFF!", COLOR.yellow);
   }
 
-  // ── Menus ──────────────────────────────────────────────────────────────
-  function releaseMouse() {
-    if (document.pointerLockElement) {
-      suppressPause = true;
-      document.exitPointerLock();
-    }
-  }
-
-  function openMenu(render) {
-    releaseMouse();
-    g.mode = "menu";
-    render();
-  }
-
-  function resume() {
-    hideOverlay();
-    g.mode = "play";
-  }
-
-  const openPause = () => {
-    // Pausing is a safe point: autosave.
-    if (g.state) store.write(g.state);
-    openMenu(() => showPause({
-      resume,
-      style: toggleStyle,
-      gym: openGym,
-      settings: () => openSettings(openPause),
-      save: () => { if (persist(g.state)) pop("SAVED", COLOR.green, false); resume(); },
-      quit: () => { persist(g.state); toTitle(); },
-    }));
-  };
-
-  const careerHandlers = {
-    close: resume,
-    enter: enterEvent,
-    launch(id) {
-      if (!launchStatus(g.state, id, careerRank(g.state, "supplements")).ok) return;
-      g.state = launch(g.state, id);
-      audio.play("cash");
-      openCareers();
-    },
-    ads(level) {
-      g.state = setAds(g.state, Number(level));
-      audio.play("ui");
-      openCareers();
-    },
-  };
-  const openCareers = () => openMenu(() => showCareers(g.state, careerHandlers));
-  const openStats = () => openMenu(() => showStats(g.state, { close: resume }));
-  const openShop = () => openMenu(() => showShop(g.state, prices(), {
-    close: resume,
-    buy(id) { buy(id); openShop(); },
-  }));
-
-  const gymHandlers = {
-    close: resume,
-    dues(d) {
-      g.state = { ...g.state, dues: Math.max(DUES_MIN, Math.min(DUES_MAX, g.state.dues + Number(d))) };
-      audio.play("ui");
-      openGym();
-    },
-    repair(i) {
-      g.state = repair(g.state, Number(i), EQUIPMENT);
-      audio.play("clank");
-      lastEquip = -1;
-      openGym();
-    },
-    upgrade(id) {
-      if (!upgradeStatus(g.state, id, careerRank(g.state, "owner")).ok) return;
-      g.state = buyUpgrade(g.state, id);
-      audio.play("cash");
-      if (id === "annex") {
-        refreshGym();
-        pop("THE ANNEX IS OPEN!", COLOR.yellow);
-      }
-      openGym();
-    },
-  };
-  const openGym = () => openMenu(() => showGym(g.state, careerRank(g.state, "owner"), gymHandlers));
-
-  function openSettings(back = resume, capturing = "") {
-    const vol = { master: audio.volume("master"), music: audio.volume("music"), sfx: audio.volume("sfx") };
-    const view = { ...settings, muted: audio.muted(), volume: vol };
-    g.settingsBack = capturing ? null : back;
-    const saveBindings = () => {
-      const cur = input.bindings();
-      settings.bindings = cur;
-      store.saveSettings(settings);
-    };
-    openMenu(() => showSettings(view, input.bindings(), {
-      close: back,
-      volume(v, bus) {
-        audio.setVolume(bus, Number(v) / 100);
-        const el = uiRoot.querySelector(`[data-arg="${bus}"] + small`);
-        if (el) el.textContent = v;
-      },
-      toggle(key) {
-        if (key === "muted") audio.setMuted(!audio.muted());
-        else {
-          settings[key] = !settings[key];
-          store.saveSettings(settings);
-          applySettings();
-        }
-        audio.play("ui");
-        openSettings(back);
-      },
-      rebind(action) {
-        openSettings(back, action);
-        input.captureNext((code) => {
-          if (code) {
-            const b = input.bindings();
-            // A key does one thing: take it off any other action first.
-            for (const a in b) b[a] = b[a].filter((c) => c !== code);
-            b[action] = [code];
-            input.setBindings(b);
-            saveBindings();
-          }
-          openSettings(back);
-        });
-      },
-      resetKeys() {
-        input.setBindings(BINDINGS);
-        settings.bindings = null;
-        store.saveSettings(settings);
-        openSettings(back);
-      },
-    }, capturing));
-  }
-
   function toggleStyle() {
     setArtStyle(isModernArt() ? ART_COMIC : ART_MODERN);
   }
@@ -558,6 +303,7 @@ export function createGame(canvas, uiRoot) {
     g.queue = [];
     syncMap();
     Object.assign(g.player, createPlayer(SPAWN[0] + 0.5, SPAWN[1] + 0.5, -Math.PI * 0.75));
+    applySettings();
     resetCrowd(g.crowd);
     refreshGym();
     g.bodyKey = -1;
@@ -638,9 +384,11 @@ export function createGame(canvas, uiRoot) {
       g.player.y = tc.y;
       g.player.angle = tc.a + Math.sin(t * 0.15) * 0.15;
     } else if (g.mode === "play") {
-      if (locked || input.device !== "keyboard") g.lookHintT = 0;
+      // Without pointer lock (denied, embedded browser, Safari quirks) the mouse still looks while the button is held.
+      const drag = !locked && input.mouse.down && input.device !== "touch";
+      if (locked || input.device !== "keyboard" || (drag && (input.mouse.dx || input.mouse.dy))) g.lookHintT = 0;
       else if (g.lookHintT > 0) g.lookHintT -= dt;
-      updatePlayer(g.player, input, dt, locked, solid);
+      updatePlayer(g.player, input, dt, locked || drag, solid);
       g.state.time += dt * MIN_PER_SEC;
       g.target = findTarget();
       if (g.target && (input.pressed("use") || input.pressed("alt"))) interact(g.target, input.pressed("alt"));
@@ -747,8 +495,8 @@ export function createGame(canvas, uiRoot) {
     if (g.mode === "play" && !document.pointerLockElement && input.device !== "touch") canvas.requestPointerLock?.()?.catch?.(() => {});
   });
   document.addEventListener("pointerlockchange", () => {
-    if (!document.pointerLockElement && g.mode === "play" && !suppressPause) openPause();
-    suppressPause = false;
+    const suppressed = menus.takeSuppress();
+    if (!document.pointerLockElement && g.mode === "play" && !suppressed) openPause();
   });
   // Leaving the tab mid-day is a safe point too.
   document.addEventListener("visibilitychange", () => {

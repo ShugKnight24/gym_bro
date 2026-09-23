@@ -1,7 +1,7 @@
 /**
  * Procedural gym textures, painted once per art style into canvases the
  * raycaster bakes fog into. Walls are 128×192 (one 2 m × 3 m cell face, so
- * 64 px per metre), floors and ceilings 64×64 per cell.
+ * 64 px per metre), floors and ceilings 128×128 per cell (the same density).
  *
  * Comic: flat cel colours, ink seams and a highlight lip on every block.
  * Modern: the same layout painted: soft gradients, grain, occlusion at the
@@ -13,7 +13,7 @@ import { SeededRNG } from "../../engine/seeded-rng.js";
 
 const TW = 128;
 const TH = 192;
-const FS = 64;
+const FS = 128;
 const M = 64; // px per metre on walls
 const INK = "#04060b";
 
@@ -303,10 +303,19 @@ function mural(g, modern, text) {
     g.fillStyle = "rgba(0,0,0,0.18)";
     for (let y = 18; y < 112; y += 6) for (let x = (y / 6) % 2 ? 3 : 0; x < TW; x += 6) g.fillRect(x, y, 2, 2);
   }
-  g.font = "italic 900 74px Impact, 'Arial Black', sans-serif";
-  g.textAlign = "center";
+  // Fit each half inside its own cell, hugging the seam, so no letter is
+  // cut where the two wall faces meet.
+  let px = 74;
+  g.font = `italic 900 ${px}px Impact, 'Arial Black', sans-serif`;
+  const fit = TW - 18;
+  const wText = g.measureText(text).width;
+  if (wText > fit) {
+    px = Math.floor((px * fit) / wText);
+    g.font = `italic 900 ${px}px Impact, 'Arial Black', sans-serif`;
+  }
+  g.textAlign = text === "GYM" ? "right" : "left";
   g.textBaseline = "middle";
-  const cx = text === "GYM" ? TW / 2 + 8 : TW / 2 - 8;
+  const cx = text === "GYM" ? TW - 5 : 5;
   if (!modern) {
     g.lineJoin = "round";
     g.lineWidth = 10;
@@ -358,27 +367,32 @@ function poster(g, modern) {
 
 /** Rubber gym mat: 1 m tiles with coloured flecks. */
 function mat(g, modern) {
+  const h = FS / 2;
   g.fillStyle = modern ? "#2a2b2e" : "#2b3140";
   g.fillRect(0, 0, FS, FS);
+  // Flecks: small and close to the base tone, so distance averages them out
+  // instead of sparkling.
   const r = new SeededRNG(21);
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < 900; i++) {
     const c = r.next();
     g.fillStyle = modern
-      ? c < 0.5 ? "rgba(90,92,96,0.5)" : "rgba(15,15,17,0.5)"
-      : c < 0.35 ? "#4a86c8" : c < 0.6 ? "#6f7a8e" : "#1a1f2a";
-    g.fillRect((r.next() * FS) | 0, (r.next() * FS) | 0, 1, 1);
+      ? c < 0.5 ? "rgba(96,98,102,0.45)" : "rgba(12,12,14,0.45)"
+      : c < 0.3 ? "rgba(84,132,196,0.7)" : c < 0.6 ? "rgba(120,130,150,0.6)" : "rgba(20,24,34,0.7)";
+    const s = r.next() < 0.2 ? 2 : 1;
+    g.fillRect((r.next() * FS) | 0, (r.next() * FS) | 0, s, s);
   }
-  g.fillStyle = modern ? "rgba(0,0,0,0.45)" : INK;
-  g.fillRect(0, 0, FS, 1);
-  g.fillRect(0, FS / 2, FS, 1);
-  g.fillRect(0, 0, 1, FS);
-  g.fillRect(FS / 2, 0, 1, FS);
-  if (modern) grain(g, 0, 0, FS, FS, 0.08, 23);
-  else {
-    g.fillStyle = "rgba(255,255,255,0.1)";
-    g.fillRect(1, 1, FS / 2 - 1, 1);
-    g.fillRect(FS / 2 + 1, FS / 2 + 1, FS / 2 - 1, 1);
-  }
+  // Tile seams with a soft lip on the far side.
+  g.fillStyle = modern ? "rgba(0,0,0,0.45)" : "rgba(4,6,11,0.85)";
+  g.fillRect(0, 0, FS, 2);
+  g.fillRect(0, h, FS, 2);
+  g.fillRect(0, 0, 2, FS);
+  g.fillRect(h, 0, 2, FS);
+  g.fillStyle = modern ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.1)";
+  g.fillRect(2, 2, FS, 1);
+  g.fillRect(2, h + 2, FS, 1);
+  g.fillRect(2, 2, 1, FS);
+  g.fillRect(h + 2, 2, 1, FS);
+  if (modern) grain(g, 0, 0, FS, FS, 0.06, 23, 2);
 }
 
 /** Lobby vinyl: a two-tone checkerboard. */
@@ -386,46 +400,54 @@ function lobby(g, modern) {
   const t = FS / 4;
   for (let y = 0; y < 4; y++) {
     for (let x = 0; x < 4; x++) {
-      g.fillStyle = (x + y) % 2 ? (modern ? "#3b3a38" : "#28324a") : (modern ? "#cfc8b8" : "#efe6cf");
+      g.fillStyle = (x + y) % 2 ? (modern ? "#3b3a38" : "#28324a") : (modern ? "#cfc8b8" : "#e4dbc4");
       g.fillRect(x * t, y * t, t, t);
     }
   }
-  if (modern) grain(g, 0, 0, FS, FS, 0.1, 31);
+  if (modern) grain(g, 0, 0, FS, FS, 0.08, 31, 2);
   else {
-    g.fillStyle = "rgba(4,6,11,0.5)";
+    g.fillStyle = "rgba(4,6,11,0.45)";
     for (let i = 0; i <= 4; i++) {
-      g.fillRect(i * t, 0, 1, FS);
-      g.fillRect(0, i * t, FS, 1);
+      g.fillRect(i * t - 1, 0, 2, FS);
+      g.fillRect(0, i * t - 1, FS, 2);
     }
   }
 }
 
-/** Acoustic ceiling tiles; `light` adds an LED panel. */
+/** Acoustic ceiling tiles on a T-bar grid; `light` adds an LED panel. */
 function ceiling(g, modern, light) {
-  g.fillStyle = modern ? "#8f8d88" : "#9fb0c4";
+  const h = FS / 2;
+  // A shade darker than the walls, so the ceiling recedes and the lamps pop.
+  g.fillStyle = modern ? "#7c7a75" : "#8797ac";
   g.fillRect(0, 0, FS, FS);
   const r = new SeededRNG(light ? 41 : 43);
-  for (let i = 0; i < 160; i++) {
-    g.fillStyle = "rgba(0,0,0,0.12)";
-    g.fillRect((r.next() * FS) | 0, (r.next() * FS) | 0, 1, 1);
+  g.fillStyle = "rgba(0,0,0,0.1)";
+  for (let i = 0; i < 500; i++) g.fillRect((r.next() * FS) | 0, (r.next() * FS) | 0, 1, 1);
+  // T-bar grid: a lit edge beside a shadowed one reads as metal, not ink.
+  g.fillStyle = modern ? "rgba(40,38,34,0.45)" : "rgba(40,50,66,0.8)";
+  for (const p of [0, h]) {
+    g.fillRect(0, p, FS, 2);
+    g.fillRect(p, 0, 2, FS);
   }
-  g.fillStyle = modern ? "rgba(40,38,34,0.5)" : "#3b4658";
-  g.fillRect(0, 0, FS, 1);
-  g.fillRect(0, FS / 2, FS, 1);
-  g.fillRect(0, 0, 1, FS);
-  g.fillRect(FS / 2, 0, 1, FS);
+  g.fillStyle = modern ? "rgba(255,250,240,0.12)" : "rgba(255,255,255,0.18)";
+  for (const p of [0, h]) {
+    g.fillRect(0, p + 2, FS, 1);
+    g.fillRect(p + 2, 0, 1, FS);
+  }
   if (light) {
-    g.fillStyle = modern ? "rgba(255,244,220,0.35)" : "rgba(255,255,230,0.5)";
-    g.fillRect(8, 8, FS - 16, FS - 16);
+    const a = FS / 8;
+    const b = FS * 3 / 16;
+    g.fillStyle = modern ? "rgba(255,244,220,0.3)" : "rgba(255,255,230,0.45)";
+    g.fillRect(a, a, FS - 2 * a, FS - 2 * a);
     g.fillStyle = modern ? "#fff8ea" : "#ffffff";
-    g.fillRect(12, 12, FS - 24, FS - 24);
+    g.fillRect(b, b, FS - 2 * b, FS - 2 * b);
     if (!modern) {
       g.strokeStyle = INK;
-      g.lineWidth = 1.5;
-      g.strokeRect(12, 12, FS - 24, FS - 24);
+      g.lineWidth = 2.5;
+      g.strokeRect(b, b, FS - 2 * b, FS - 2 * b);
     }
   }
-  if (modern) grain(g, 0, 0, FS, FS, 0.06, 47);
+  if (modern) grain(g, 0, 0, FS, FS, 0.05, 47, 2);
 }
 
 /** All textures for a style: { walls, floors, ceils, reflective } indexed by the map ids. */
