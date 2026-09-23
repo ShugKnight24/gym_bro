@@ -46,7 +46,7 @@ function rig(m, bf, pose, fem) {
   const hipY = -94;
   const shY = -143;
   const sw = (fem ? 15 : 17.5) + m.back * 4 + m.chest * 2.5;
-  const hipW = fem ? 11 : 10;
+  const hipW = fem ? 11.5 : 10;
   const legs = {};
   for (const s of [-1, 1]) {
     const lift = (s < 0 ? P0.liftL : P0.liftR) || 0;
@@ -78,8 +78,8 @@ function body(R, look, m, bf) {
   const { hipY, shY, sw, legs, arms, head, fem } = R;
   const def = Math.max(0, 1 - bf * 1.6);
   const lat = sw - 1 + m.back * 3.5;
-  const ww = (fem ? 11 : 12.5) + bf * 9 - m.core * 1.2;
-  const hw = (fem ? 15 : 13.5) + bf * 3;
+  const ww = (fem ? 9.5 : 12.5) + bf * 9 - m.core * 1.2;
+  const hw = (fem ? 16 : 13.5) + bf * 3;
   let s = "";
 
   // Legs, calves and sneakers.
@@ -98,18 +98,34 @@ function body(R, look, m, bf) {
     s += sh(`M${P(A[0] - 6, A[1] + 1)}Q${P(A[0], A[1] - 3)} ${P(A[0] + 6, A[1] + 1)}L${P(A[0] + 8 + k * 2, sole - 3)}Q${P(A[0] + 8 + k * 2, sole)} ${P(A[0] + 4, sole)}H${f(A[0] - 6)}Q${P(A[0] - 9 + k * 1.5, sole)} ${P(A[0] - 8 + k * 1.5, sole - 3)}Z`, look.shoes);
     s += ln(`M${P(A[0] - 8 + k * 1.5, sole - 1.5)}H${f(A[0] + 8 + k * 2)}`, INK, 1.6, 0.9);
   }
-  // Shorts: two leg tubes and a waistband.
+  // Shorts: fitted legs that taper to a flat hem (round tube ends read as a rear view), and a waistband.
   for (const k of [-1, 1]) {
     const { H, K } = legs[k];
-    s += limb([H[0] - k * 1, H[1] - 4], lerp(H, K, fem ? 0.4 : 0.58), thighW + 5, thighW + 4, look.shorts);
+    const hem = lerp(H, K, fem ? 0.42 : 0.58);
+    const dx = K[0] - H[0];
+    const dy = K[1] - H[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const half = thighW / 2 + (fem ? 1.2 : 2);
+    const out = k * Math.sign(nx || 1);
+    const ho = [hem[0] + nx * half * out, hem[1] + ny * half * out];
+    const hi = [hem[0] - nx * half * out, hem[1] - ny * half * out];
+    const outerTop = [k * (hw + 0.5), hipY];
+    const crotch = [k * 0.8, hipY + 12];
+    s += sh(`M${P(...outerTop)}Q${P(ho[0] + k * 1.5, (outerTop[1] + ho[1]) / 2)} ${P(...ho)}` +
+      `Q${P((ho[0] + hi[0]) / 2, (ho[1] + hi[1]) / 2 + 1.5)} ${P(...hi)}L${P(...crotch)}L${P(0, hipY)}Z`, look.shorts);
+    s += ln(`M${P(...lerp(ho, hi, 0.08))}Q${P((ho[0] + hi[0]) / 2, (ho[1] + hi[1]) / 2 - 0.5)} ${P(...lerp(ho, hi, 0.92))}`, mix(look.shorts, "#ffffff", 0.3), 1.1, 0.6);
   }
-  s += sh(`M${P(-hw, hipY - 9)}H${f(hw)}L${P(hw + 1.5, hipY + 8)}H${f(-hw - 1.5)}Z`, look.shorts);
-  s += ln(`M${P(-hw, hipY - 5)}H${f(hw)}`, mix(look.shorts, "#ffffff", 0.35), 1.4, 0.8);
-  s += ln(`M${P(0, hipY + 2)}V${f(hipY + 16)}`, INK, 0.9, 0.5);
+  // The waistband goes on after the torso and top (see below), so skin never cuts across it.
+  const waistband = () =>
+    sh(`M${P(-hw - 0.5, hipY - 7)}Q0,${f(hipY - 5)} ${P(hw + 0.5, hipY - 7)}L${P(hw + 1, hipY + 1)}Q0,${f(hipY + 3)} ${P(-hw - 1, hipY + 1)}Z`, look.shorts) +
+    ln(`M${P(-hw, hipY - 3.5)}Q0,${f(hipY - 1.5)} ${P(hw, hipY - 3.5)}`, mix(look.shorts, "#ffffff", 0.35), 1.2, 0.7) +
+    ln(`M${P(0, hipY + 2)}V${f(hipY + 12)}`, INK, 0.9, 0.45);
 
   // Arms behind the torso edge (drawn first so the torso overlaps the armpit).
   const uaW = 9 + m.arms * 6 + bf * 2 - (fem ? 1.5 : 0);
-  const faW = 8 + m.arms * 3.2;
+  const faW = 8 + m.arms * 3.2 - (fem ? 1 : 0);
   const armMarkup = (k) => {
     const { S, E, W } = arms[k];
     let a = limb(S, E, uaW, uaW * 0.78, skin);
@@ -148,9 +164,16 @@ function body(R, look, m, bf) {
     `Q${P(ww + 1 + bf * 3, hipY - 22)} ${P(ww, hipY - 8)}L${P(hw, hipY + 1)}H${f(-hw)}L${P(-ww, hipY - 8)}` +
     `Q${P(-ww - 1 - bf * 3, hipY - 22)} ${P(-lat, shY + 24)}Z`;
   s += sh(torso, skin, 1.3);
-  // Pecs: broad plates under the collarbones with a hard lower edge.
+  // Pecs: broad plates under the collarbones with a hard lower edge. Women get a soft bust instead.
   const pc = m.chest;
-  for (const k of [-1, 1]) {
+  if (fem) {
+    for (const k of [-1, 1]) {
+      const cx = k * sw * 0.42;
+      s += ell(cx, shY + 15, sw * 0.4, 7.5, mix(skin, "#ffffff", 0.05), 0);
+      s += ln(`M${P(k * sw * 0.1, shY + 20)}Q${P(cx, shY + 25)} ${P(k * (sw - 2), shY + 17)}`, skinDk, 1.1, 0.45);
+    }
+  }
+  for (const k of fem ? [] : [-1, 1]) {
     const lowY = shY + 15 + pc * 4 + bf * 2;
     const pe = `M${P(k * 1.2, shY + 2)}Q${P(k * sw * 0.55, shY - 1)} ${P(k * (sw - 2.5), shY + 4)}` +
       `Q${P(k * (sw - 1), shY + 12)} ${P(k * (sw - 4), lowY - 1)}Q${P(k * sw * 0.45, lowY + 2)} ${P(k * 1.2, lowY)}Z`;
@@ -158,9 +181,9 @@ function body(R, look, m, bf) {
     s += ln(`M${P(k * (sw - 2), shY + 9)}Q${P(k * (sw - 2.5), lowY - 2)} ${P(k * (sw - 5), lowY - 0.5)}Q${P(k * sw * 0.45, lowY + 2.5)} ${P(k * 1.2, lowY + 0.5)}`, INK, 1.2, 0.35 + pc * 0.5);
     s += ln(`M${P(k * sw * 0.25, shY + 3)}Q${P(k * sw * 0.6, shY + 1)} ${P(k * (sw - 4), shY + 5)}`, "#ffffff", 1, 0.25);
   }
-  s += ln(`M0,${f(shY + 3)}V${f(shY + 16 + pc * 4)}`, skinDk, 1, 0.3 + pc * 0.4);
+  if (!fem) s += ln(`M0,${f(shY + 3)}V${f(shY + 16 + pc * 4)}`, skinDk, 1, 0.3 + pc * 0.4);
   // Abs and obliques fade in with definition.
-  const ab = def * (0.25 + m.core * 0.75);
+  const ab = def * (0.25 + m.core * 0.75) * (fem ? 0.6 : 1);
   if (ab > 0.05) {
     s += ln(`M0,${f(shY + 22)}V${f(hipY - 8)}`, skinDk, 1.1, ab);
     for (let i = 0; i < 3; i++) {
@@ -194,22 +217,32 @@ function body(R, look, m, bf) {
         s += ln(`M${P(...lerp(S, E, 0.42))}l${f(-k * 2)},1`, INK, 0.8, 0.4);
       }
     }
-  } else if (look.style === "bra") {
-    s += sh(`M${P(-sw + 3, shY + 3)}Q0,${f(shY - 2)} ${P(sw - 3, shY + 3)}L${P(sw - 3, shY + 20)}Q0,${f(shY + 24)} ${P(-sw + 3, shY + 20)}Z`, top, 1.2);
-    s += ln(`M${P(-sw + 3, shY + 17)}Q0,${f(shY + 21)} ${P(sw - 3, shY + 17)}`, INK, 1, 0.5);
   }
+  s += waistband();
+
   // Shoulder joint: an ink-less patch of the arm root hides the torso's
   // outline where the arm leaves it, then the delt caps the joint from
   // inside the torso out along the upper arm, so no pose shows a seam.
   for (const k of [-1, 1]) {
     if (look.style === "tee") break;
     const { S, E } = arms[k];
-    const r = 4.2 + m.arms * 3.4 + m.back * 1.2;
-    const root = [S[0] - k * r * 0.8, S[1] - 1];
+    const r = (4.2 + m.arms * 3.4 + m.back * 1.2) * (fem ? 0.75 : 0.9);
+    // The cap sits on the shoulder's outer edge; reaching further in paints it across the chest.
+    const root = [S[0] - k * r * 0.25, S[1] - 1];
     s += limb(root, lerp(S, E, 0.45), uaW * 1.02, uaW * 0.8, skin, 0);
-    s += sh(capsule(root, lerp(S, E, 0.36), r * 2.3, r * 1.5), skin, 1.1);
+    s += sh(capsule(root, lerp(S, E, 0.36), r * 2, r * 1.4), skin, 1.1);
     const d = lerp(S, E, 0.1);
     s += spec(`M${P(d[0] - k * 2, d[1] - r + 1.5)}Q${P(d[0] + k * r * 0.5, d[1] - r + 1)} ${P(d[0] + k * r * 0.8, d[1])}`, 0.4, 1);
+  }
+
+  // Sports bra over the shoulder caps: straps, two cups and an underband.
+  if (look.style === "bra") {
+    const band = shY + 25;
+    for (const k of [-1, 1]) s += ln(`M${P(k * (neckW + 1), shY - 6)}L${P(k * sw * 0.55, shY + 8)}`, top, 3.2, 1);
+    s += sh(`M${P(-sw + 2.5, shY + 9)}Q${P(-sw * 0.5, shY + 2)} ${P(-1.5, shY + 9)}Q0,${f(shY + 11)} ${P(1.5, shY + 9)}` +
+      `Q${P(sw * 0.5, shY + 2)} ${P(sw - 2.5, shY + 9)}L${P(sw - 3, band)}Q0,${f(band + 2)} ${P(-sw + 3, band)}Z`, top, 1.2);
+    s += ln(`M${P(-sw + 3, band - 4)}Q0,${f(band - 2)} ${P(sw - 3, band - 4)}`, mix(top, "#000000", 0.3), 1.2, 0.6);
+    s += ln(`M0,${f(shY + 11)}V${f(band - 4)}`, mix(top, "#000000", 0.3), 0.9, 0.5);
   }
 
   // Head.
@@ -228,11 +261,20 @@ function body(R, look, m, bf) {
   } else {
     s += spec(`M${P(hx - 5, hy - 11)}Q${P(hx, hy - 13.5)} ${P(hx + 4, hy - 12)}`, 0.6, 1.4);
   }
-  // Face: brows, eyes, nose, a confident grin.
-  s += ln(`M${P(hx - 7, hy - 3)}l4.5,1M${P(hx + 7, hy - 3)}l-4.5,1`, INK, 1.6, 1);
-  s += ell(hx - 4, hy + 0.5, 1.3, 1.5, INK, 0) + ell(hx + 4, hy + 0.5, 1.3, 1.5, INK, 0);
-  s += ln(`M${P(hx + 0.5, hy + 1)}l-1.2,4.5h2`, skinDk, 1, 0.8);
-  s += ln(`M${P(hx - 3.5, hy + 8.5)}Q${P(hx, hy + 10.5)} ${P(hx + 3.5, hy + 8)}`, INK, 1.2, 0.9);
+  // Face: brows, eyes, nose, a confident grin. Women: arched brows, lashes, lips.
+  if (fem) {
+    s += ln(`M${P(hx - 7, hy - 2.5)}Q${P(hx - 5, hy - 5)} ${P(hx - 2.5, hy - 3.5)}M${P(hx + 7, hy - 2.5)}Q${P(hx + 5, hy - 5)} ${P(hx + 2.5, hy - 3.5)}`, INK, 1.1, 0.9);
+    s += ell(hx - 4, hy + 0.6, 1.3, 1.6, INK, 0) + ell(hx + 4, hy + 0.6, 1.3, 1.6, INK, 0);
+    s += ln(`M${P(hx - 5.3, hy - 0.4)}l-1.4,-1.1M${P(hx + 5.3, hy - 0.4)}l1.4,-1.1`, INK, 0.9, 0.9);
+    s += ln(`M${P(hx + 0.4, hy + 2)}l-0.8,3.2h1.4`, skinDk, 0.8, 0.6);
+    s += sh(`M${P(hx - 3.2, hy + 8.4)}Q${P(hx, hy + 7.4)} ${P(hx + 3.2, hy + 8.4)}Q${P(hx, hy + 11)} ${P(hx - 3.2, hy + 8.4)}Z`, mix(skin, "#c0395a", 0.45), 0);
+    s += ln(`M${P(hx - 3.2, hy + 8.5)}Q${P(hx, hy + 9.6)} ${P(hx + 3.2, hy + 8.5)}`, INK, 0.8, 0.7);
+  } else {
+    s += ln(`M${P(hx - 7, hy - 3)}l4.5,1M${P(hx + 7, hy - 3)}l-4.5,1`, INK, 1.6, 1);
+    s += ell(hx - 4, hy + 0.5, 1.3, 1.5, INK, 0) + ell(hx + 4, hy + 0.5, 1.3, 1.5, INK, 0);
+    s += ln(`M${P(hx + 0.5, hy + 1)}l-1.2,4.5h2`, skinDk, 1, 0.8);
+    s += ln(`M${P(hx - 3.5, hy + 8.5)}Q${P(hx, hy + 10.5)} ${P(hx + 3.5, hy + 8)}`, INK, 1.2, 0.9);
+  }
   if (!fem && (look.stubble ?? m.back > 0.5)) s += ln(`M${P(hx - 7, hy + 6)}Q${P(hx, hy + 15)} ${P(hx + 7, hy + 6)}`, skinDk, 2.4, 0.25);
   return s;
 }
