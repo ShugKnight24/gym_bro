@@ -5,6 +5,8 @@
 
 import { clamp } from "./stats.js";
 import { BROKEN, isBroken } from "./members.js";
+import { amenityUpkeep } from "./amenities.js";
+import { EQUIPMENT } from "../data/equipment.js";
 
 /** One-off purchases. `owner` is the Gym Owner rank that unlocks it. */
 export const UPGRADES = {
@@ -28,7 +30,7 @@ export const ADS = [
 export function dailyCosts(g) {
   const rent = 10 + 3 * g.gym.placed.length;
   let staff = 0;
-  let upkeep = 0;
+  let upkeep = amenityUpkeep(g.gym.placed, EQUIPMENT);
   for (const id of UPGRADE_IDS) {
     if (!g.gym.upgrades[id]) continue;
     if (UPGRADES[id].staff) staff += UPGRADES[id].daily;

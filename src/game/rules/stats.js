@@ -31,7 +31,8 @@ export const MAX_ENERGY = 100;
 export const PACE = { strRate: 0.4, strHalf: 30, musRate: 1.1, musHalf: 45 };
 
 export function newStats() {
-  return { str: 10, end: 10, bf: 22, energy: MAX_ENERGY, mus: byGroup(4), fat: byGroup(0) };
+  // tan: days of stage colour left; posing: practised posing skill 0..1 (both help at physique shows).
+  return { str: 10, end: 10, bf: 22, energy: MAX_ENERGY, mus: byGroup(4), fat: byGroup(0), tan: 0, posing: 0 };
 }
 
 /** 0-100 score: mean development, punished for weak links and for body fat. */
@@ -98,7 +99,10 @@ export function trainSet(s, eq, quality, tier = 1, boost = 1) {
 export function recover(s, sleep = 1, bonus = 0) {
   const fat = {};
   for (const g of GROUPS) fat[g] = Math.max(0, Math.round(s.fat[g] - 45 * sleep - 5 - bonus));
-  return { ...s, fat, energy: Math.round(clamp(40 + 60 * sleep, 0, MAX_ENERGY)), bf: r2(clamp(s.bf + 0.05, 6, 40)) };
+  return {
+    ...s, fat, energy: Math.round(clamp(40 + 60 * sleep, 0, MAX_ENERGY)), bf: r2(clamp(s.bf + 0.05, 6, 40)),
+    tan: Math.max(0, (s.tan || 0) - 1),
+  };
 }
 
 /** Eat or drink a shop item: energy up (capped), maybe a little fat. */

@@ -65,6 +65,12 @@ get an on-screen stick and buttons.
   reputation) and your daily dues against the fair price, work out on your
   machines and pay every night. Satisfaction (crowding, dirt, broken
   machines, price) decides who quits; the nightly summary says why.
+- Amenities (locker room, sauna, steam room, cold plunge, tanning bed,
+  recovery station, posing room) are built like machines. They add appeal,
+  satisfaction and the dues members will accept but no capacity, and cost
+  daily upkeep. Each one can be used once a day (E) for faster muscle
+  recovery, energy, a stage tan or posing practice; tan and posing skill
+  raise physique-show scores. Past ten members, people expect a locker room.
 - Every night pays rent (per machine), staff and ads. Machines wear with use
   and break at 100%: repair them with F or in the gym office.
 - About one night in three brings a happening: an influencer visit, an

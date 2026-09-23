@@ -5,6 +5,7 @@
 
 import { EVENTS, CAREERS, CAREER_IDS } from "../data/events.js";
 import { physique, clamp } from "./stats.js";
+import { showBonus } from "./amenities.js";
 
 /** Values a requirement can reference. */
 export function metrics(g) {
@@ -85,7 +86,7 @@ export function eligibility(g, id) {
 /** Player's event score: shows judge physique and posing, meets judge strength and lift execution. */
 export function eventScore(kind, stats, execution) {
   const q = clamp(execution, 0, 1.25);
-  return kind === "show" ? physique(stats) * (0.8 + 0.25 * q) : stats.str * (0.75 + 0.3 * q) + stats.end * 0.1;
+  return kind === "show" ? physique(stats) * (0.8 + 0.25 * q) * showBonus(stats) : stats.str * (0.75 + 0.3 * q) + stats.end * 0.1;
 }
 
 /** Awards judge the gym itself: appeal, membership and how happy members are. */

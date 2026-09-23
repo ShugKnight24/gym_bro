@@ -17,6 +17,7 @@ import { rollHappening } from "./happenings.js";
 import { promote } from "./compete.js";
 import { rngFor, newSeed, SALT } from "./rng.js";
 import { newMember, reconcileRoster, unmetShare, favStatus } from "./roster.js";
+import { amenityEffect, tanningFees } from "./amenities.js";
 
 export const DAY_START = 7 * 60;
 export const DAY_END = 24 * 60;
@@ -38,7 +39,7 @@ export function newGame(seed = newSeed()) {
     gym: { placed: STARTER_GYM.map((p) => ({ ...p })), clean: 80, upgrades: {} },
     career: { results: [], last: {}, best: {}, legends: [] },
     supps: { launched: [], ads: 0 },
-    today: { sets: 0, str: 0, end: 0, spent: 0, boost: 1, perfect: 0, chats: [] },
+    today: { sets: 0, str: 0, end: 0, spent: 0, boost: 1, perfect: 0, chats: [], used: [] },
   };
 }
 
@@ -55,8 +56,9 @@ export const gymAppeal = (g) => appeal(g.gym.placed, g.gym.clean, g.rep, EQUIPME
 /** Everything the gym panel and the night need about the business right now. */
 export function gymReport(g) {
   const app = gymAppeal(g);
-  const cap = capacity(g.gym.placed);
-  const fair = fairDues(app, g.rep) + (g.gym.upgrades.trainer ? 3 : 0);
+  const cap = capacity(g.gym.placed, EQUIPMENT);
+  const amen = amenityEffect(g.gym.placed, g.members, EQUIPMENT);
+  const fair = Math.round(fairDues(app, g.rep) + (g.gym.upgrades.trainer ? 3 : 0) + amen.fair);
   const broken = g.gym.placed.filter(isBroken).length;
   const distinct = new Set(g.gym.placed.filter((p) => !isBroken(p)).map((p) => p.type)).size;
   const unmet = unmetShare(g.roster, g.gym.placed);
@@ -64,11 +66,13 @@ export function gymReport(g) {
     members: g.members, cap, clean: g.gym.clean, broken, dues: g.dues, fair, distinct, unmet,
     desk: !!g.gym.upgrades.receptionist, wanted: mostWanted(g),
   };
-  const sat = satisfaction(inputs);
+  const sat = Math.max(0, Math.min(100, satisfaction(inputs) + amen.sat));
+  const reasons = satisfactionReasons(inputs, sat);
+  if (amen.reason) reasons.unshift(amen.reason);
   return {
     appeal: app, cap, fair, broken, sat, demand: priceDemand(g.dues, fair),
     target: targetMembers(app, cap, priceDemand(g.dues, fair)),
-    reasons: satisfactionReasons(inputs, sat), costs: dailyCosts(g),
+    reasons, costs: dailyCosts(g), fees: tanningFees(g.gym.placed, g.members, EQUIPMENT),
   };
 }
 
@@ -94,6 +98,7 @@ export function endDay(g0, passedOut = isPastMidnight(g0)) {
   // Satisfaction moves toward today's conditions rather than jumping.
   const sat = Math.round(g.sat + (rep.sat - g.sat) * 0.6);
   const dues = g.members * g.dues;
+  const fees = rep.fees;
   const sales = nightlySales(g, rngFor(g.seed, g.day, SALT.supps));
   const costs = rep.costs;
   const { join, quit } = rosterChange(g.members, rep.target, sat, g.gym.upgrades.receptionist ? 1 : 0);
@@ -105,10 +110,10 @@ export function endDay(g0, passedOut = isPastMidnight(g0)) {
   if (g.gym.upgrades.cleaner) clean = Math.max(clean, 85);
   let state = {
     ...g,
-    day: g.day + 1, time: DAY_START, money: g.money + dues + sales.revenue - costs.total, members, sat,
+    day: g.day + 1, time: DAY_START, money: g.money + dues + fees + sales.revenue - costs.total, members, sat,
     stats: recover(g.stats, sleep, bonus),
     gym: { ...g.gym, placed: worn.placed, clean },
-    today: { sets: 0, str: 0, end: 0, spent: 0, boost: 1, perfect: 0, chats: [] },
+    today: { sets: 0, str: 0, end: 0, spent: 0, boost: 1, perfect: 0, chats: [], used: [] },
   };
   const hap = rollHappening(state, rngFor(g.seed, g.day, SALT.happening));
   state = hap.state;
@@ -123,7 +128,7 @@ export function endDay(g0, passedOut = isPastMidnight(g0)) {
     phys: physique(state.stats), physDelta: Math.round((physique(state.stats) - physBefore) * 10) / 10,
     fatigue: state.stats.fat, sat, reasons: rep.reasons, costs, sales,
     joinedNames: names.joined.map((m) => m.name), left: names.left.map(({ m, why }) => ({ name: m.name, why })),
-    net: dues + sales.revenue - costs.total, broke: worn.broke, news: hap.news, ups: [...pre.ups, ...promo.ups],
+    fees, net: dues + fees + sales.revenue - costs.total, broke: worn.broke, news: hap.news, ups: [...pre.ups, ...promo.ups],
   };
   return { state, summary };
 }
