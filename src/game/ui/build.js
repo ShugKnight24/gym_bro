@@ -1,9 +1,11 @@
 /**
  * Build mode: an overhead diorama of the gym grid with the catalog panel.
  * Left click buys and places the selected machine, right click sells, R or
- * the wheel rotates its access side. The catalog pages when it outgrows the
- * view: digits pick within the page, Q (pageNext) flips pages. Rules live in ../rules/build.js; this
- * module only hit-tests and draws, and hands actions back to the game.
+ * the wheel rotates its access side. The catalog is split into Machines and
+ * Amenities tabs, each paged to fit the view: digits pick within the page,
+ * Q (pageNext) steps through every page tab by tab, and clicking a tab jumps
+ * to it. Rules live in ../rules/build.js; this module only hit-tests and
+ * draws, and hands actions back to the game.
  */
 
 import { drawSvgSprite } from "../../engine/sprite.js";
@@ -17,7 +19,10 @@ import { plate, text, keycap, cached, blit, memo, INK, COLOR } from "./kit.js";
 
 const PANEL_W = 300;
 const ROW_H = 62;
-const ROW_Y = 118;
+const ROW_Y = 132;
+const TAB_Y = 92;
+const TAB_W = 108;
+const TAB_H = 28;
 const MAX_ROWS = 8;
 const spriteOpts = { alpha: 1, flip: false };
 
@@ -28,7 +33,31 @@ export function createBuild() {
 
 /** Catalog rows per page: up to MAX_ROWS, leaving room for the note and message plate. */
 const perPage = (view) => Math.max(1, Math.min(MAX_ROWS, Math.floor((view.h - ROW_Y - 90) / ROW_H)));
-const pageCount = (per) => Math.max(1, Math.ceil(EQUIPMENT_IDS.length / per));
+
+/** Catalog tabs: indices into EQUIPMENT_IDS, so `b.sel` stays a plain catalog index. */
+const TABS = [
+  { name: "MACHINES", ids: [] },
+  { name: "AMENITIES", ids: [] },
+];
+EQUIPMENT_IDS.forEach((id, i) => TABS[EQUIPMENT[id].kind === "amenity" ? 1 : 0].ids.push(i));
+/** Catalog order as shown: machines, then amenities (the d-pad walks this). */
+const ORDER = TABS.flatMap((t) => t.ids);
+
+let pagesFor = 0;
+let pageList = [];
+/** Every page, tab by tab: [{ tab, ids, label }] (label: "2/3" within its tab), rebuilt only when the rows per page change. */
+function pagesOf(per) {
+  if (per !== pagesFor) {
+    pagesFor = per;
+    pageList = [];
+    TABS.forEach((t, tab) => {
+      const of = Math.ceil(t.ids.length / per);
+      for (let n = 0; n < of; n++) pageList.push({ tab, ids: t.ids.slice(n * per, n * per + per), label: of > 1 ? `${n + 1}/${of}` : "next" });
+    });
+  }
+  return pageList;
+}
+const pageOfSel = (pages, sel) => Math.max(0, pages.findIndex((pg) => pg.ids.includes(sel)));
 /** The selected catalog entry, clamped so a stale index never misses. */
 const selected = (b) => (b.sel >= 0 ? EQUIPMENT[EQUIPMENT_IDS[Math.min(b.sel, EQUIPMENT_IDS.length - 1)]] : null);
 
@@ -54,30 +83,32 @@ export function updateBuild(b, input, view, map, placed, dt) {
     b.sel = -1;
     return null;
   }
-  const per = perPage(view);
-  const pages = pageCount(per);
-  if (b.page >= pages) b.page = 0;
-  if (pages > 1 && input.pressed("pageNext")) {
-    b.page = (b.page + 1) % pages;
-    b.sel = b.page * per;
-  }
-  const first = b.page * per;
-  const rows = Math.min(per, EQUIPMENT_IDS.length - first);
-  for (let i = 0; i < Math.min(rows, 9); i++) if (input.pressed(`slot${i + 1}`)) b.sel = first + i;
-  // Gamepad d-pad steps through the whole catalog, flipping pages as it goes.
+  const pages = pagesOf(perPage(view));
+  if (b.page >= pages.length) b.page = 0;
+  if (pages.length > 1 && input.pressed("pageNext")) b.page = (b.page + 1) % pages.length;
+  const ids = pages[b.page].ids;
+  for (let i = 0; i < Math.min(ids.length, 9); i++) if (input.pressed(`slot${i + 1}`)) b.sel = ids[i];
+  // Gamepad d-pad steps through the whole catalog, flipping pages and tabs as it goes.
   const step = (input.pressed("slotNext") ? 1 : 0) - (input.pressed("slotPrev") ? 1 : 0);
   if (step) {
-    b.sel = b.sel < 0 ? (step > 0 ? 0 : EQUIPMENT_IDS.length - 1) : (b.sel + step + EQUIPMENT_IDS.length) % EQUIPMENT_IDS.length;
-    b.page = Math.floor(b.sel / per);
+    const n = ORDER.length;
+    const at = ORDER.indexOf(b.sel);
+    b.sel = ORDER[at < 0 ? (step > 0 ? 0 : n - 1) : (at + step + n) % n];
+    b.page = pageOfSel(pages, b.sel);
   }
   if (input.pressed("rotate") || input.mouse.wheel) b.rot = (b.rot + (input.mouse.wheel < 0 ? 3 : 1)) & 3;
   const L = layout(view, map);
   const mx = input.mouse.x;
   const my = input.mouse.y;
-  // Catalog rows.
+  // Catalog tabs and rows.
   if (mx >= L.px && input.mouse.clicked) {
+    const tab = my >= TAB_Y && my < TAB_Y + TAB_H ? Math.floor((mx - L.px - 10) / (TAB_W + 4)) : -1;
+    if (tab >= 0 && tab < TABS.length) {
+      if (pages[b.page].tab !== tab) b.page = pages.findIndex((pg) => pg.tab === tab);
+      return null;
+    }
     const i = Math.floor((my - ROW_Y) / ROW_H);
-    if (i >= 0 && i < rows) b.sel = first + i;
+    if (i >= 0 && i < ids.length) b.sel = ids[i];
     return null;
   }
   const cx = Math.floor((mx - L.ox) / L.cs);
@@ -265,34 +296,39 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
   hx += keycap(ctx, "TAB", hx, hy, 11) + 6;
   text(ctx, "done", hx, hy, 13, "#ffffff", "left", true);
 
-  // Catalog.
+  // Catalog: tabs, the page's rows, then the picked item's blurb.
   plate(ctx, L.px, 84, PANEL_W, view.h - 100, "cream");
-  text(ctx, "EQUIPMENT", L.px + 16, 102, 20, modern ? "#f3e9cf" : COLOR.red, "left");
-  const per = perPage(view);
-  const pages = pageCount(per);
-  const page = Math.min(b.page, pages - 1);
-  const first = page * per;
-  const rows = Math.min(per, EQUIPMENT_IDS.length - first);
-  if (pages > 1) {
-    const kx = L.px + PANEL_W - 104;
-    text(ctx, `${page + 1}/${pages}`, kx - 8, 102, 13, modern ? "#c9d2dc" : INK, "right");
-    const kw = keycap(ctx, "Q", kx, 102, 11);
-    text(ctx, "more", kx + kw + 6, 102, 13, modern ? "#c9d2dc" : INK, "left");
+  const pages = pagesOf(perPage(view));
+  const page = Math.min(b.page, pages.length - 1);
+  const pg = pages[page];
+  for (let k = 0; k < TABS.length; k++) {
+    const on = k === pg.tab;
+    const tx = L.px + 10 + k * (TAB_W + 4);
+    plate(ctx, tx, TAB_Y + (on ? 0 : 3), TAB_W, TAB_H - (on ? 0 : 3), on ? "red" : "dark");
+    text(ctx, TABS[k].name, tx + TAB_W / 2, TAB_Y + TAB_H / 2 + (on ? 0 : 1.5), 14, on ? "#ffffff" : "#aab4c0", "center", on);
   }
-  for (let r = 0; r < rows; r++) {
-    const i = first + r;
+  // Page within the tab, and the key that steps through all of them.
+  const kx = L.px + 10 + TABS.length * (TAB_W + 4) + 4;
+  const kw = keycap(ctx, "Q", kx, TAB_Y + TAB_H / 2, 11);
+  text(ctx, pg.label, kx + kw + 5, TAB_Y + TAB_H / 2, 13, modern ? "#c9d2dc" : INK, "left");
+  for (let r = 0; r < pg.ids.length; r++) {
+    const i = pg.ids[r];
     const eq = EQUIPMENT[EQUIPMENT_IDS[i]];
     const y = ROW_Y + r * ROW_H;
     const sel = i === b.sel;
     plate(ctx, L.px + 10, y, PANEL_W - 20, ROW_H - 8, sel ? "yellow" : "dark");
     const c = sel && !modern ? INK : "#e8eef4";
-    drawSvgSprite(ctx, eq.sprite, set.sprites[eq.sprite], set.defs, L.px + 46, y + ROW_H - 12, 0.2, t);
+    // Thumbnail fitted to the slot and centred on its box, so wide amenities stay clear of the text.
+    const sp = set.sprites[eq.sprite];
+    const k = Math.min(0.2, 64 / sp.box[2], 50 / sp.box[3]);
+    drawSvgSprite(ctx, eq.sprite, sp, set.defs, L.px + 46 - (sp.box[0] + sp.box[2] / 2) * k, y + ROW_H - 12, k, t);
     text(ctx, `${r < 9 ? r + 1 : " "}  ${eq.name}`, L.px + 84, y + 17, 15, c);
-    text(ctx, `$${eq.cost} · appeal +${eq.appeal} · ${eq.energy}⚡`, L.px + 84, y + 38, 12, c);
+    const cost = eq.kind === "amenity" ? `upkeep $${eq.upkeep}/day` : `${eq.energy}⚡`;
+    text(ctx, `$${eq.cost} · appeal +${eq.appeal} · ${cost}`, L.px + 84, y + 38, 12, c);
     if (g.state.money < eq.cost) text(ctx, "$", L.px + PANEL_W - 24, y + 17, 16, COLOR.red, "right");
   }
-  const note = selected(b)?.desc || "Pick a machine above, then click the floor.";
-  text(ctx, note, L.px + 16, ROW_Y + rows * ROW_H + 12, 12, modern ? "#c9d2dc" : INK);
+  const note = selected(b)?.desc || "Pick an item above, then click the floor.";
+  text(ctx, note, L.px + 16, ROW_Y + pg.ids.length * ROW_H + 12, 12, modern ? "#c9d2dc" : INK);
   if (b.msgT > 0) {
     ctx.globalAlpha = Math.min(1, b.msgT * 2);
     plate(ctx, L.px + 10, view.h - 74, PANEL_W - 20, 44, "red");
