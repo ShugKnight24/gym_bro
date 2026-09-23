@@ -8,10 +8,14 @@
  * the art never gets upscaled into blur.
  */
 
+import { detectDeviceTier, BYTE_BUDGET as BUDGETS } from "./device-tier.js";
+
 const MAX_PX = 4096;
 // Decoded bitmaps cost width×height×4 bytes. Past this budget the least
 // recently used sizes are dropped (a level can show dozens of sprite sizes).
-const BYTE_BUDGET = 256 * 1024 * 1024;
+// The budget follows the device tier, read lazily on first use.
+let budget = 0;
+const byteBudget = () => budget || (budget = typeof document === "undefined" ? BUDGETS.high : BUDGETS[detectDeviceTier()] || BUDGETS.mid);
 const EVICT_IDLE_MS = 2000;
 const layers = new Map(); // layer id -> Map(bucket -> { img, ready, failed, bytes, lastUsed })
 let totalBytes = 0;
@@ -49,7 +53,7 @@ function bake(entry) {
 }
 
 function evictIdle(now) {
-  if (totalBytes <= BYTE_BUDGET) return;
+  if (totalBytes <= byteBudget()) return;
   const idle = [];
   for (const [id, buckets] of layers) {
     for (const [bucket, e] of buckets) {
@@ -58,7 +62,7 @@ function evictIdle(now) {
   }
   idle.sort((a, b) => a[0] - b[0]);
   for (const [, id, bucket, e] of idle) {
-    if (totalBytes <= BYTE_BUDGET) break;
+    if (totalBytes <= byteBudget()) break;
     const buckets = layers.get(id);
     buckets.delete(bucket);
     if (!buckets.size) layers.delete(id);
@@ -151,7 +155,7 @@ export function layerFailed(id) {
 
 /**
  * Drop every decoded bitmap. Called when the player leaves the Modern asset
- * set for Legacy, so up to BYTE_BUDGET of decoded art is not held for a style
+ * set for Legacy, so up to the byte budget of decoded art is not held for a style
  * that is no longer drawn. Layers re-decode lazily if Modern comes back.
  */
 export function releaseRasterCache() {

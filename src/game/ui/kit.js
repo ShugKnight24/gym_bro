@@ -29,9 +29,12 @@ export function font(px, comic = true, weight = 700) {
 
 const sprites = new Map(); // key → sub → numeric size/dpr/style → canvas
 let count = 0;
+// Device px per CSS px under the current transform (dpr times any HUD scale),
+// rounded up to a quarter so sprites are never painted below the resolution
+// they are blitted at.
 const pixelRatio = (ctx) => {
   const m = ctx.getTransform();
-  return Math.max(1, Math.round(Math.hypot(m.a, m.b) * 4) / 4);
+  return Math.max(1, Math.ceil(Math.hypot(m.a, m.b) * 4 - 0.01) / 4);
 };
 
 /**
@@ -66,6 +69,8 @@ export function cached(ctx, key, w, h, pad, paint, sub = "") {
 }
 
 export function blit(ctx, c, x, y, w, h) {
+  // A zero-size view (first frame before layout) paints a zero-size canvas.
+  if (!c.width || !c.height) return;
   const p = c._pad;
   ctx.drawImage(c, Math.round(x - p), Math.round(y - p), Math.round(w + p * 2), Math.round(h + p * 2));
 }

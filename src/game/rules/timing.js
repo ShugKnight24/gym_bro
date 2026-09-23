@@ -9,9 +9,18 @@ export const PERFECT = 2;
 export const GOOD = 1;
 export const MISS = 0;
 
-/** Tempo for a weight tier (0-2): cursor sweeps per second and window half-widths. */
-export function tempo(tier) {
-  return { speed: 0.8 + 0.3 * tier, perfect: 0.06 - 0.012 * tier, good: 0.17 - 0.03 * tier };
+/**
+ * Tempo for a weight tier (0-2): cursor sweeps per second and window
+ * half-widths. `assist` (accessibility option) slows the cursor and widens the windows.
+ */
+export function tempo(tier, assist = false) {
+  const t = { speed: 0.8 + 0.3 * tier, perfect: 0.06 - 0.012 * tier, good: 0.17 - 0.03 * tier };
+  if (assist) {
+    t.speed *= 0.75;
+    t.perfect *= 1.7;
+    t.good *= 1.4;
+  }
+  return t;
 }
 
 /** Cursor position 0..1 after `sweeps` (one sweep = one edge-to-edge pass). */

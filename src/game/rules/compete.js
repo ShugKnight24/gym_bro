@@ -23,19 +23,50 @@ export function reqProgress(req, m) {
 }
 export const meets = (req, m) => reqProgress(req, m) >= 1;
 
+/** Highest rank whose thresholds the player meets right now. */
+function liveRank(c, m) {
+  let rank = 0;
+  while (rank + 1 < c.ranks.length && meets(c.ranks[rank + 1].req, m)) rank++;
+  return rank;
+}
+
+/** Ranks are sticky: once earned, spending the money or losing members never takes one away. */
+export function careerRank(g, id) {
+  return Math.max(g.career.best?.[id] || 0, liveRank(CAREERS[id], metrics(g)));
+}
+
+export const isTopRank = (id, rank) => rank === CAREERS[id].ranks.length - 1;
+
+/**
+ * Record any newly earned ranks. Returns { state, ups: [{ id, career, rank, name, perk, top }] }.
+ */
+export function promote(g) {
+  const best = { ...g.career.best };
+  const ups = [];
+  for (const id of CAREER_IDS) {
+    const c = CAREERS[id];
+    const rank = careerRank(g, id);
+    const was = best[id] || 0;
+    if (rank <= was) continue;
+    best[id] = rank;
+    ups.push({ id, career: c.name, rank, name: c.ranks[rank].name, perk: c.perks?.[rank] || "", top: isTopRank(id, rank) });
+  }
+  if (!ups.length) return { state: g, ups };
+  return { state: { ...g, career: { ...g.career, best } }, ups };
+}
+
 /** Career ladder status for the panel. */
 export function careerStatus(g) {
   const m = metrics(g);
   return CAREER_IDS.map((id) => {
     const c = CAREERS[id];
-    let rank = 0;
-    while (rank + 1 < c.ranks.length && meets(c.ranks[rank + 1].req, m)) rank++;
+    const rank = careerRank(g, id);
     const next = c.ranks[rank + 1] || null;
     return {
       id, name: c.name, blurb: c.blurb, rank, rankName: c.ranks[rank].name,
       next: next && { name: next.name, req: next.req, text: reqText(next.req), progress: reqProgress(next.req, m) },
       locked: id === "supplements" && rank === 0,
-      events: c.events, products: c.products || null,
+      events: c.events, perks: c.perks || [],
     };
   });
 }
@@ -56,6 +87,9 @@ export function eventScore(kind, stats, execution) {
   const q = clamp(execution, 0, 1.25);
   return kind === "show" ? physique(stats) * (0.8 + 0.25 * q) : stats.str * (0.75 + 0.3 * q) + stats.end * 0.1;
 }
+
+/** Awards judge the gym itself: appeal, membership and how happy members are. */
+export const awardScore = (g, appeal) => appeal * 0.55 + g.members * 0.6 + g.sat * 0.15;
 
 /**
  * Score everyone and place the player. Rivals vary ±8% per event.

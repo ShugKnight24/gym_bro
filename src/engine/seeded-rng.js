@@ -2,8 +2,8 @@
  * Seeded pseudo-random number generator (Mulberry32).
  *
  * Deterministic: given the same seed, produces the same sequence.
- * Used for reproducible arena spawns (BUG-027) and any future
- * system that needs replay-safe randomness.
+ * Game rules reach it through src/game/rules/rng.js, which keys a stream
+ * by the save's seed and what the roll is for.
  *
  * Usage:
  *   const rng = new SeededRNG(42);
@@ -63,17 +63,5 @@ export class SeededRNG {
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
-  }
-
-  /**
-   * Create a seed from round + difficulty for arena reproducibility.
-   * @param {number} round
-   * @param {number} difficulty
-   * @returns {number}
-   */
-  static arenaSeed(round, difficulty) {
-    // Combine round and difficulty into a deterministic seed.
-    // The magic constant spreads bits to avoid clustering.
-    return (round * 2654435761 + difficulty * 40503) | 0;
   }
 }
