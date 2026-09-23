@@ -1,7 +1,8 @@
 /**
  * Build mode: an overhead diorama of the gym grid with the catalog panel.
  * Left click buys and places the selected machine, right click sells, R or
- * the wheel rotates its access side. Rules live in ../rules/build.js; this
+ * the wheel rotates its access side. The catalog pages when it outgrows the
+ * view: digits pick within the page, Q (pageNext) flips pages. Rules live in ../rules/build.js; this
  * module only hit-tests and draws, and hands actions back to the game.
  */
 
@@ -16,11 +17,19 @@ import { plate, text, keycap, cached, blit, memo, INK, COLOR } from "./kit.js";
 
 const PANEL_W = 300;
 const ROW_H = 62;
+const ROW_Y = 118;
+const MAX_ROWS = 8;
 const spriteOpts = { alpha: 1, flip: false };
 
 export function createBuild() {
-  return { on: false, sel: 0, rot: 2, hx: -1, hy: -1, err: null, msg: "", msgT: 0 };
+  return { on: false, sel: 0, page: 0, rot: 2, hx: -1, hy: -1, err: null, msg: "", msgT: 0 };
 }
+
+/** Catalog rows per page: up to MAX_ROWS, leaving room for the note and message plate. */
+const perPage = (view) => Math.max(1, Math.min(MAX_ROWS, Math.floor((view.h - ROW_Y - 90) / ROW_H)));
+const pageCount = (per) => Math.max(1, Math.ceil(EQUIPMENT_IDS.length / per));
+/** The selected catalog entry, clamped so a stale index never misses. */
+const selected = (b) => EQUIPMENT[EQUIPMENT_IDS[Math.min(Math.max(0, b.sel), EQUIPMENT_IDS.length - 1)]];
 
 function layout(view, map) {
   const availW = view.w - PANEL_W - 48;
@@ -38,15 +47,30 @@ function layout(view, map) {
 export function updateBuild(b, input, view, map, placed, dt) {
   b.msgT = Math.max(0, b.msgT - dt);
   if (input.pressed("build") || input.pressed("pause")) return { kind: "exit" };
-  for (let i = 0; i < EQUIPMENT_IDS.length; i++) if (input.pressed(`slot${i + 1}`)) b.sel = i;
+  const per = perPage(view);
+  const pages = pageCount(per);
+  if (b.page >= pages) b.page = 0;
+  if (pages > 1 && input.pressed("pageNext")) {
+    b.page = (b.page + 1) % pages;
+    b.sel = b.page * per;
+  }
+  const first = b.page * per;
+  const rows = Math.min(per, EQUIPMENT_IDS.length - first);
+  for (let i = 0; i < Math.min(rows, 9); i++) if (input.pressed(`slot${i + 1}`)) b.sel = first + i;
+  // Gamepad d-pad steps through the whole catalog, flipping pages as it goes.
+  const step = (input.pressed("slotNext") ? 1 : 0) - (input.pressed("slotPrev") ? 1 : 0);
+  if (step) {
+    b.sel = (b.sel + step + EQUIPMENT_IDS.length) % EQUIPMENT_IDS.length;
+    b.page = Math.floor(b.sel / per);
+  }
   if (input.pressed("rotate") || input.mouse.wheel) b.rot = (b.rot + (input.mouse.wheel < 0 ? 3 : 1)) & 3;
   const L = layout(view, map);
   const mx = input.mouse.x;
   const my = input.mouse.y;
   // Catalog rows.
   if (mx >= L.px && input.mouse.clicked) {
-    const i = Math.floor((my - 118) / ROW_H);
-    if (i >= 0 && i < EQUIPMENT_IDS.length) b.sel = i;
+    const i = Math.floor((my - ROW_Y) / ROW_H);
+    if (i >= 0 && i < rows) b.sel = first + i;
     return null;
   }
   const cx = Math.floor((mx - L.ox) / L.cs);
@@ -57,7 +81,7 @@ export function updateBuild(b, input, view, map, placed, dt) {
   b.err = inside ? placementError(map, placed, cx, cy, b.rot) : null;
   if (!inside) return null;
   if (input.mouse.rightClicked && findAt(placed, cx, cy) >= 0) return { kind: "sell", x: cx, y: cy };
-  if (input.mouse.clicked) return { kind: "place", type: EQUIPMENT_IDS[b.sel], x: cx, y: cy, rot: b.rot };
+  if (input.mouse.clicked) return { kind: "place", type: EQUIPMENT_IDS[b.sel] ?? EQUIPMENT_IDS[0], x: cx, y: cy, rot: b.rot };
   return null;
 }
 
@@ -188,7 +212,7 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
     const X = L.ox + b.hx * L.cs;
     const Y = L.oy + b.hy * L.cs;
     const occupied = findAt(placed, b.hx, b.hy) >= 0;
-    const eq = EQUIPMENT[EQUIPMENT_IDS[b.sel]];
+    const eq = selected(b);
     const ok = !b.err && g.state.money >= eq.cost;
     if (!occupied) {
       ctx.fillStyle = ok ? "rgba(61,207,106,0.35)" : "rgba(226,54,43,0.35)";
@@ -226,20 +250,31 @@ export function drawBuild(ctx, view, b, g, map, crowd, player, t) {
   // Catalog.
   plate(ctx, L.px, 84, PANEL_W, view.h - 100, "cream");
   text(ctx, "EQUIPMENT", L.px + 16, 102, 20, modern ? "#f3e9cf" : COLOR.red, "left");
-  for (let i = 0; i < EQUIPMENT_IDS.length; i++) {
-    const id = EQUIPMENT_IDS[i];
-    const eq = EQUIPMENT[id];
-    const y = 118 + i * ROW_H;
+  const per = perPage(view);
+  const pages = pageCount(per);
+  const page = Math.min(b.page, pages - 1);
+  const first = page * per;
+  const rows = Math.min(per, EQUIPMENT_IDS.length - first);
+  if (pages > 1) {
+    const kx = L.px + PANEL_W - 104;
+    text(ctx, `${page + 1}/${pages}`, kx - 8, 102, 13, modern ? "#c9d2dc" : INK, "right");
+    const kw = keycap(ctx, "Q", kx, 102, 11);
+    text(ctx, "more", kx + kw + 6, 102, 13, modern ? "#c9d2dc" : INK, "left");
+  }
+  for (let r = 0; r < rows; r++) {
+    const i = first + r;
+    const eq = EQUIPMENT[EQUIPMENT_IDS[i]];
+    const y = ROW_Y + r * ROW_H;
     const sel = i === b.sel;
     plate(ctx, L.px + 10, y, PANEL_W - 20, ROW_H - 8, sel ? "yellow" : "dark");
     const c = sel && !modern ? INK : "#e8eef4";
     drawSvgSprite(ctx, eq.sprite, set.sprites[eq.sprite], set.defs, L.px + 46, y + ROW_H - 12, 0.2, t);
-    text(ctx, `${i + 1}  ${eq.name}`, L.px + 84, y + 17, 15, c);
+    text(ctx, `${r < 9 ? r + 1 : " "}  ${eq.name}`, L.px + 84, y + 17, 15, c);
     text(ctx, `$${eq.cost} · appeal +${eq.appeal} · ${eq.energy}⚡`, L.px + 84, y + 38, 12, c);
     if (g.state.money < eq.cost) text(ctx, "$", L.px + PANEL_W - 24, y + 17, 16, COLOR.red, "right");
   }
-  const note = EQUIPMENT[EQUIPMENT_IDS[b.sel]].desc;
-  text(ctx, note, L.px + 16, 118 + EQUIPMENT_IDS.length * ROW_H + 12, 12, modern ? "#c9d2dc" : INK);
+  const note = selected(b).desc;
+  text(ctx, note, L.px + 16, ROW_Y + rows * ROW_H + 12, 12, modern ? "#c9d2dc" : INK);
   if (b.msgT > 0) {
     ctx.globalAlpha = Math.min(1, b.msgT * 2);
     plate(ctx, L.px + 10, view.h - 74, PANEL_W - 20, 44, "red");
